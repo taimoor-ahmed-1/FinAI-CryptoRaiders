@@ -1,1 +1,428 @@
-# MyProject
+# FinRL Trading Pipeline
+
+A comprehensive FinRL (Financial Reinforcement Learning) pipeline for Bitcoin trading using Alpha101 signals, RNN-based feature extraction, and PPO reinforcement learning.
+
+## Overview
+
+This pipeline implements a complete machine learning workflow for algorithmic trading:
+
+1. **Data Aggregation** - Convert per-second data to different timeframes
+2. **Data Splitting** - Split data into train/validation/test sets
+3. **Alpha101 Signal Generation** - Generate 101 technical indicators
+4. **RNN Training** - Train RNN models to extract features from Alpha101 signals
+5. **PPO Agent Training** - Train reinforcement learning agents for trading
+6. **Evaluation** - Evaluate trained agents on unseen data
+
+## Pipeline Architecture
+
+```
+Raw Data → Data Aggregation → Data Splitting → Alpha101 Generation → RNN Training → PPO Training → Evaluation
+    ↓              ↓              ↓                ↓                ↓              ↓            ↓
+1sec data    → 1min/5min    → train/val/test  → 101 signals   → predictions  → RL agent   → metrics
+```
+
+## Prerequisites
+
+### System Requirements
+- Python 3.8+
+- CUDA-capable GPU (recommended for training)
+- 16GB+ RAM (for 1-second data processing)
+- 50GB+ disk space
+
+### Required Dependencies
+```bash
+pip install torch torchvision torchaudio
+pip install numpy pandas matplotlib seaborn
+pip install scipy scikit-learn
+pip install google-colab  # If running in Colab
+```
+
+## Quick Start
+
+### 1. Data Preparation
+
+Ensure you have the following data structure:
+```
+data/
+├── BTC_1sec_with_sentiment_risk_train.csv  # Raw 1-second data
+└── (other data files as needed)
+```
+
+### 2. Run Complete Pipeline
+
+Execute the notebooks in sequence:
+
+```bash
+# Step 1: Data Aggregation
+jupyter notebook 1_data_aggregator.ipynb
+
+# Step 2: Data Splitting  
+jupyter notebook 2_data_splitter.ipynb
+
+# Step 3: Alpha101 Signal Generation
+jupyter notebook 3_alpha_signals_generator.ipynb
+
+# Step 4: RNN Training
+jupyter notebook 4_rnn_trainer.ipynb
+
+# Step 5: PPO Agent Training
+jupyter notebook 5_erl_trainer.ipynb
+
+# Step 6: Evaluation
+jupyter notebook 6_erl_evaluator.ipynb
+```
+
+## Detailed Instructions
+
+### Step 1: Data Aggregation (`1_data_aggregator.ipynb`)
+
+**Purpose**: Convert per-second Bitcoin data to different timeframes (1min, 5min, etc.)
+
+**Key Features**:
+- Aggregates price, volume, and order book data
+- Handles sentiment and risk scores
+- Supports multiple timeframes: 1min, 5min, 10min, 15min, 30min, 1H
+- Provides compression statistics and visualizations
+
+**Usage**:
+```python
+# Initialize aggregator
+aggregator = ColabDataAggregator()
+
+# Run aggregation pipeline
+aggregated_df = aggregator.run_aggregation_pipeline(
+    input_file='data/BTC_1sec_with_sentiment_risk_train.csv',
+    timeframe='1min',
+    output_file='data/BTC_1min_with_sentiment_risk_train.csv',
+    plot_comparison=True
+)
+```
+
+**Output**: 
+- `data/BTC_1min_with_sentiment_risk_train.csv`
+- `data/BTC_5min_with_sentiment_risk_train.csv`
+- Aggregation statistics and plots
+
+### Step 2: Data Splitting (`2_data_splitter.ipynb`)
+
+**Purpose**: Split aggregated data into train (70%), validation (15%), and test (15%) sets
+
+**Key Features**:
+- Chronological splitting to prevent data leakage
+- Supports multiple timeframes
+- Validates split integrity
+- Creates organized directory structure
+
+**Usage**:
+```python
+# Split 1-second data
+run_data_splitting_pipeline(
+    input_file='data/BTC_1sec_with_sentiment_risk_train.csv',
+    timeframe='1sec',
+    output_dir='./data'
+)
+
+# Split 1-minute data
+run_data_splitting_pipeline(
+    input_file='data/BTC_1min_with_sentiment_risk_train.csv',
+    timeframe='1min',
+    output_dir='./data'
+)
+```
+
+**Output**:
+```
+data/
+├── 1sec/
+│   ├── BTC_1sec_with_sentiment_risk_train_1sec_train_70.csv
+│   ├── BTC_1sec_with_sentiment_risk_train_1sec_val_15.csv
+│   └── BTC_1sec_with_sentiment_risk_train_1sec_test_15.csv
+└── 1min/
+    ├── BTC_1min_with_sentiment_risk_train_1min_train_70.csv
+    ├── BTC_1min_with_sentiment_risk_train_1min_val_15.csv
+    └── BTC_1min_with_sentiment_risk_train_1min_test_15.csv
+```
+
+### Step 3: Alpha101 Signal Generation (`3_alpha_signals_generator.ipynb`)
+
+**Purpose**: Generate 101 technical indicators (Alpha101) from market data
+
+**Key Features**:
+- Implements all 101 Alpha signals from WorldQuant
+- Handles order book data, sentiment, and risk scores
+- Normalizes signals using quantile-based scaling
+- Processes all data splits (train/val/test)
+
+**Usage**:
+```python
+# Process 1-second data
+process_1sec()
+
+# Process 1-minute data  
+process_1min()
+
+# Process 5-minute data
+process_5min()
+```
+
+**Output**:
+```
+data/
+├── 1sec/alpha101/
+│   ├── alpha101_train.npy
+│   ├── alpha101_val.npy
+│   └── alpha101_test.npy
+├── 1min/alpha101/
+│   ├── alpha101_train.npy
+│   ├── alpha101_val.npy
+│   └── alpha101_test.npy
+└── 5min/alpha101/
+    ├── alpha101_train.npy
+    ├── alpha101_val.npy
+    └── alpha101_test.npy
+```
+
+### Step 4: RNN Training (`4_rnn_trainer.ipynb`)
+
+**Purpose**: Train RNN models to extract meaningful features from Alpha101 signals
+
+**Key Features**:
+- Enhanced RNN architecture with LSTM + GRU + Attention
+- Multi-head attention mechanism
+- Label generation for future price prediction
+- Comprehensive training with validation
+- Generates predictions for all data splits
+
+**Architecture**:
+- Input: 101 Alpha signals
+- Hidden layers: LSTM + GRU with residual connections
+- Attention: Multi-head self-attention
+- Output: 8-dimensional feature representation
+
+**Usage**:
+```python
+# Train for 1-second data
+run_alpha101_training_pipeline(timeframe='1sec', gpu_id=0, use_enhanced=True)
+
+# Train for 1-minute data
+run_alpha101_training_pipeline(timeframe='1min', gpu_id=0, use_enhanced=True)
+```
+
+**Output**:
+```
+output/4_1/
+├── 1sec/
+│   ├── best_model.pth
+│   ├── train_predictions.npy
+│   ├── valid_predictions.npy
+│   ├── test_predictions.npy
+│   ├── train_targets.npy
+│   ├── valid_targets.npy
+│   ├── test_targets.npy
+│   └── training_curves.png
+└── 1min/
+    └── (similar structure)
+```
+
+### Step 5: PPO Agent Training (`5_erl_trainer.ipynb`)
+
+**Purpose**: Train PPO (Proximal Policy Optimization) agents for trading decisions
+
+**Key Features**:
+- Simplified PPO architecture (fixed from original complex version)
+- State space: [position, holding, alpha101_features, sentiment, risk]
+- Action space: [SHORT, HOLD, LONG] = [-1, 0, 1]
+- Reward shaping for trading incentives
+- Comprehensive training with early stopping
+
+**Training Parameters**:
+- Total steps: 2,000,000
+- Batch size: 64
+- Learning rate: 3e-4
+- Horizon length: 4096
+- Reward scale: 1e-1
+
+**Usage**:
+```python
+# Train PPO agent for 1-second data
+agent = train_improved_ppo_agent('1sec')
+
+# Train PPO agent for 1-minute data
+agent = train_improved_ppo_agent('1min')
+```
+
+**Output**:
+```
+trained_agents/5_7_3/
+├── 1sec/PPO/
+│   ├── actor.pth
+│   ├── critic.pth
+│   └── training_stats.json
+└── 1min/PPO/
+    └── (similar structure)
+```
+
+### Step 6: Evaluation (`6_erl_evaluator.ipynb`)
+
+**Purpose**: Evaluate trained PPO agents on unseen data
+
+**Key Features**:
+- Evaluates on validation or test data (configurable)
+- Calculates financial metrics: Sharpe ratio, max drawdown, returns
+- Generates comprehensive plots
+- Saves evaluation results
+
+**Metrics Calculated**:
+- Total return
+- Sharpe ratio
+- Maximum drawdown
+- Return over max drawdown
+- Asset progression over time
+
+**Usage**:
+```python
+# Evaluate 1-second agent
+evaluate_improved_ensemble(
+    save_path='./trained_agents/5_7_3/1sec/PPO',
+    agent_classes=[ImprovedPPO],
+    timeframe='1sec',
+    gpu_id=0
+)
+```
+
+**Output**:
+```
+trained_agents/5_7_3/1sec/PPO_evaluation_results/
+├── net_assets.npy
+├── positions.npy
+├── cash.npy
+├── btc_positions.npy
+├── midpoints.npy
+├── cum_returns.npy
+├── metrics_summary.json
+├── evaluation_plots.png
+└── cum_returns_vs_midpoint.png
+```
+
+## Configuration Options
+
+### Data Split Selection
+In `6_erl_evaluator.ipynb`, you can choose which dataset to evaluate on:
+```python
+EVAL_DATA_SPLIT = "valid"  # Options: "train", "valid", "test"
+```
+
+### Timeframe Selection
+All notebooks support multiple timeframes:
+- `1sec`: 1-second data (most granular, requires more resources)
+- `1min`: 1-minute data (balanced)
+- `5min`: 5-minute data (least granular, fastest)
+
+### GPU Configuration
+Set GPU ID in each notebook:
+```python
+gpu_id = 0  # Use GPU 0, or -1 for CPU
+```
+
+## Expected Results
+
+### Performance Metrics
+Typical results for 1-second data:
+- **Sharpe Ratio**: 0.5 - 2.0
+- **Max Drawdown**: 0.05 - 0.15
+- **Total Return**: 5% - 20% (varies by market conditions)
+
+### File Sizes
+- Raw 1-second data: ~500MB
+- Alpha101 signals: ~200MB per timeframe
+- Trained models: ~50MB per agent
+- Evaluation results: ~10MB per run
+
+## Troubleshooting
+
+### Common Issues
+
+1. **CUDA Out of Memory**
+   - Reduce batch size in training notebooks
+   - Use CPU instead of GPU (`gpu_id = -1`)
+   - Process smaller timeframes (1min instead of 1sec)
+
+2. **Data Not Found Errors**
+   - Ensure data files are in correct locations
+   - Run previous pipeline steps in sequence
+   - Check file permissions
+
+3. **Training Convergence Issues**
+   - Adjust learning rates in training notebooks
+   - Increase training steps
+   - Check data quality and preprocessing
+
+4. **Memory Issues with 1-second Data**
+   - Use data aggregation to create 1-minute data
+   - Process data in smaller chunks
+   - Increase system RAM or use cloud computing
+
+### Performance Optimization
+
+1. **For Faster Training**:
+   - Use 1-minute or 5-minute data
+   - Reduce sequence length in RNN training
+   - Use fewer training steps
+
+2. **For Better Results**:
+   - Use 1-second data
+   - Increase training steps
+   - Tune hyperparameters
+
+## File Structure
+
+```
+FinRL Task 1/
+├── 1_data_aggregator.ipynb          # Data aggregation
+├── 2_data_splitter.ipynb            # Data splitting
+├── 3_alpha_signals_generator.ipynb  # Alpha101 generation
+├── 4_rnn_trainer.ipynb              # RNN training
+├── 5_erl_trainer.ipynb              # PPO training
+├── 6_erl_evaluator.ipynb            # Evaluation
+├── data/                            # Processed data
+│   ├── 1sec/
+│   ├── 1min/
+│   └── 5min/
+├── output/                          # RNN predictions
+│   └── 4_1/
+├── trained_agents/                  # Trained RL agents
+│   └── 5_7_3/
+└── README.md                        # This file
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test the pipeline
+5. Submit a pull request
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Citation
+
+If you use this pipeline in your research, please cite:
+
+```bibtex
+@misc{finrl_pipeline,
+  title={FinRL Trading Pipeline with Alpha101 and PPO},
+  author={Your Name},
+  year={2024},
+  url={https://github.com/your-repo/finrl-pipeline}
+}
+```
+
+## Support
+
+For questions and support:
+- Create an issue on GitHub
+- Check the troubleshooting section
+- Review the notebook comments and documentation
