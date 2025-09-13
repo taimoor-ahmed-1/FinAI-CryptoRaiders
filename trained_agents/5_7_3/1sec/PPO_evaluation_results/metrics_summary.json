@@ -1,0 +1,13 @@
+{
+  "timeframe": "1sec",
+  "starting_cash": 1000000.0,
+  "final_net_assets": 1000169.375,
+  "total_return": 0.000169375,
+  "sharpe_ratio": 0.0882319396916402,
+  "max_drawdown": -1.8746821239193347e-07,
+  "return_over_max_drawdown": 903.4865049341943,
+  "ensemble_size": 1,
+  "agent_classes": [
+    "ImprovedPPO"
+  ]
+}
