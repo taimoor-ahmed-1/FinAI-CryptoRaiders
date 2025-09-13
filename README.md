@@ -417,23 +417,6 @@ FinRL Task 1/
 4. Test the pipeline
 5. Submit a pull request
 
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Citation
-
-If you use this pipeline in your research, please cite:
-
-```bibtex
-@misc{finrl_pipeline,
-  title={FinRL Trading Pipeline with Alpha101 and PPO},
-  author={Your Name},
-  year={2024},
-  url={https://github.com/your-repo/finrl-pipeline}
-}
-```
-
 ## Support
 
 For questions and support:

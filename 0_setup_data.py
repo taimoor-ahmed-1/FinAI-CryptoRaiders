@@ -33,7 +33,7 @@ def create_directory_structure():
     print("Creating directory structure...")
     for directory in directories:
         os.makedirs(directory, exist_ok=True)
-        print(f"✓ Created: {directory}")
+        print(f"Created: {directory}")
     
     print("\nDirectory structure created successfully!")
 
@@ -112,7 +112,7 @@ The pipeline will automatically generate the following files:
 
 def main():
     """Main setup function"""
-    print("🚀 FinRL Pipeline Data Setup")
+    print("FinRL Pipeline Data Setup")
     print("=" * 50)
     
     # Create directory structure
@@ -122,7 +122,7 @@ def main():
     create_sample_data_info()
     
     print("\n" + "=" * 50)
-    print("✅ Setup complete!")
+    print("Setup complete!")
     print("\nNext steps:")
     print("1. Place your BTC_1sec_with_sentiment_risk_train.csv file in the data/ directory")
     print("2. Run the pipeline notebooks in sequence:")
