@@ -1,7 +1,19 @@
-# Data files (too large for GitHub)
-data/
-output/
-trained_agents/
+# Very large CSV files (excluded from Git)
+data/*/BTC_*_train_*.csv
+data/*/BTC_*_val_*.csv
+data/*/BTC_*_test_*.csv
+data/BTC_*.csv
+
+# Large output files (excluded from Git)
+output/*/train_predictions.npy
+output/*/valid_predictions.npy
+output/*/test_predictions.npy
+output/*/train_targets.npy
+output/*/valid_targets.npy
+output/*/test_targets.npy
+
+# Evaluation results (excluded from Git)
+trained_agents/*/PPO_evaluation_results/
 
 # Python
 __pycache__/
@@ -60,18 +72,6 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
-
-# Large model files
-*.pth
-*.pkl
-*.pickle
-
-# Large data files
-*.csv
-*.npy
-*.npz
-*.h5
-*.hdf5
 
 # Results and outputs
 results/
