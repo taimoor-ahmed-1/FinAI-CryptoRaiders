@@ -372,10 +372,9 @@ Based on evaluation of the trained PPO agent on validation data:
 
 ### Key Insights
 
-✅ **Positive Performance**: The agent achieved a small but positive return of 0.017%  
-✅ **Low Risk**: Extremely low maximum drawdown (-0.0000187%) indicates conservative trading  
-✅ **Stable Trading**: High Return/Max Drawdown ratio (903.49) shows excellent risk management  
-⚠️ **Conservative Strategy**: Low Sharpe ratio (0.088) suggests the agent was very cautious  
+**Positive Performance**: The agent achieved a small but positive return of 0.017%  
+**Low Risk**: Extremely low maximum drawdown (-0.0000187%) indicates conservative trading  
+**Stable Trading**: High Return/Max Drawdown ratio (903.49) shows excellent risk management   **Conservative Strategy**: Low Sharpe ratio (0.088) suggests the agent was very cautious  
 
 ### Performance Analysis
 
