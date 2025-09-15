@@ -355,7 +355,7 @@ Set GPU ID in each notebook:
 gpu_id = 0  # Use GPU 0, or -1 for CPU
 ```
 
-## Actual Results
+## Results
 
 ### Performance Metrics (1-Second Data)
 
