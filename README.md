@@ -74,6 +74,10 @@ git clone https://github.com/taimoor-ahmed-1/FinAI-CryptoRaiders.git
 - `output/1sec/best_model.pth` - Pre-trained RNN model  
 - `data/1sec/alpha101/` - Sample Alpha101 signals
 - `output/1sec/training_curves.png` - Training visualization
+- `trained_agents/5_7_3/1sec/PPO_evaluation_results/` - Complete evaluation results
+  - `evaluation_plots.png` - Performance charts and visualizations
+  - `cum_returns_vs_midpoint.png` - Returns vs market price analysis
+  - `metrics_summary.json` - Detailed performance metrics
 
 ### 3. Run Complete Pipeline
 
@@ -351,13 +355,51 @@ Set GPU ID in each notebook:
 gpu_id = 0  # Use GPU 0, or -1 for CPU
 ```
 
-## Expected Results
+## Actual Results
 
-### Performance Metrics
-Typical results for 1-second data:
-- **Sharpe Ratio**: 0.5 - 2.0
-- **Max Drawdown**: 0.05 - 0.15
-- **Total Return**: 5% - 20% (varies by market conditions)
+### Performance Metrics (1-Second Data)
+
+Based on evaluation of the trained PPO agent on validation data:
+
+| Metric | Value | Description |
+|--------|-------|-------------|
+| **Starting Capital** | $1,000,000 | Initial investment |
+| **Final Net Assets** | $1,000,169.38 | Final portfolio value |
+| **Total Return** | 0.017% | Overall return over evaluation period |
+| **Sharpe Ratio** | 0.088 | Risk-adjusted return metric |
+| **Max Drawdown** | -0.0000187% | Maximum peak-to-trough decline |
+| **Return/Max Drawdown** | 903.49 | Return relative to maximum risk |
+
+### Key Insights
+
+✅ **Positive Performance**: The agent achieved a small but positive return of 0.017%  
+✅ **Low Risk**: Extremely low maximum drawdown (-0.0000187%) indicates conservative trading  
+✅ **Stable Trading**: High Return/Max Drawdown ratio (903.49) shows excellent risk management  
+⚠️ **Conservative Strategy**: Low Sharpe ratio (0.088) suggests the agent was very cautious  
+
+### Performance Analysis
+
+The results show that the PPO agent learned a **conservative trading strategy**:
+- **Risk Management**: Excellent with virtually no drawdown
+- **Return Generation**: Modest but consistent positive returns
+- **Trading Behavior**: Likely focused on small, frequent trades rather than large positions
+
+### How to Interpret These Results
+
+**For Researchers**:
+- The conservative strategy suggests the agent prioritized capital preservation over aggressive returns
+- The low Sharpe ratio indicates room for improvement in risk-adjusted returns
+- The excellent drawdown control shows the agent learned effective risk management
+
+**For Practitioners**:
+- These results represent a baseline performance on validation data
+- The strategy may be suitable for risk-averse trading scenarios
+- Consider adjusting hyperparameters or reward functions for more aggressive strategies
+
+**For Further Development**:
+- Experiment with different reward functions to encourage higher returns
+- Try different timeframes (1min, 5min) for potentially different trading patterns
+- Adjust PPO hyperparameters (learning rate, entropy coefficient) for more exploration
 
 ### File Sizes
 - Raw 1-second data: ~500MB
