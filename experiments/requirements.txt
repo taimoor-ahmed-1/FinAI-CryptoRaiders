@@ -1,0 +1,10 @@
+# Versions the code was developed and tested with (Python 3.12.10).
+# On Colab only `requirements-colab.txt` is installed - the preinstalled torch /
+# numpy / pandas are used, and every notebook records the exact environment it
+# ran in (pip freeze, Python, CUDA, GPU) to <drive>/report/environment/.
+numpy==2.5.0
+pandas==3.0.6
+scipy==1.18.1
+torch==2.14.0
+optuna==5.0.0
+matplotlib==3.11.2

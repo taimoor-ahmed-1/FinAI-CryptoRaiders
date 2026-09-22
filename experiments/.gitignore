@@ -1,0 +1,20 @@
+# The dataset is confidential and must never be committed.
+data/
+*.csv
+*.csv.gz
+*.parquet
+# Generated artefacts live on Google Drive, not in git.
+outputs/
+prepared/
+runs/
+report/
+*.npy
+*.npz
+*.pt
+*.pth
+*.db
+# Secrets
+*key*.txt
+.env
+__pycache__/
+.ipynb_checkpoints/

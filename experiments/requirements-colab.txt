@@ -1,0 +1,2 @@
+# Installed by every notebook on top of the Colab runtime.
+optuna==5.0.0
