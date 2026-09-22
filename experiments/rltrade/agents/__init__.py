@@ -5,10 +5,16 @@
     agent.act(obs, deterministic=True)           LongTensor of actions
     agent.state_dict() / agent.load_state_dict(sd)
 """
+from .a2c import A2C
+from .dqn import D3QN, DQN, DoubleDQN
 from .ppo import PPO
 
 AGENTS = {
     "ppo": PPO,
+    "a2c": A2C,
+    "dqn": DQN,
+    "ddqn": DoubleDQN,
+    "d3qn": D3QN,
 }
 
 
