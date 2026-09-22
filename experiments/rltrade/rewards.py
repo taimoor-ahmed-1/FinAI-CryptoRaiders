@@ -15,6 +15,8 @@ deducted from `eq_next`).
                        +0.001 per unit of position change and +1% of any positive
                        reward. Kept only to show what the shaping did; it pays
                        the agent for trading, which fights the transaction costs.
+    diff_sharpe        differential Sharpe ratio (Moody & Saffell, 2001)
+    drawdown_penalized net_asset_change minus a penalty on every increase in drawdown
 """
 import torch as th
 
@@ -51,9 +53,13 @@ REWARDS = {
     "legacy_shaped": LegacyShaped,
 }
 
+# risk-adjusted rewards live in their own module (imported here, after Reward exists)
+from .rewards_risk import DifferentialSharpe, DrawdownPenalized  # noqa: E402
+REWARDS.update({"diff_sharpe": DifferentialSharpe, "drawdown_penalized": DrawdownPenalized})
+
 
 def make_reward(name, num_envs, device, scale=None, **kwargs):
-    """`scale=None` keeps the reward's own default."""
+    """`scale=None` keeps the reward's own default (100 for equity-based, 1 for diff_sharpe)."""
     if name not in REWARDS:
         raise ValueError(f"unknown reward {name!r}; choose from {tuple(REWARDS)}")
     if scale is not None:
