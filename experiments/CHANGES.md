@@ -64,3 +64,15 @@ Unchanged on purpose: chronological 70/15/15 split (`int(n·0.70)`, `int(n·0.85
 definition (`seq_to_label`), the Alpha101 formulas, the RNN architecture and its hyperparameters
 (as defaults), the PPO hyperparameters (as defaults), the discrete {decrease, keep, increase}
 action space with shorting allowed, and 2 M training transitions.
+
+## Additions
+
+| Area | What |
+|---|---|
+| RNN architectures | LSTM, GRU, Transformer encoder (causal mask), TCN (dilated causal convolutions) next to the LSTM+GRU hybrid — `rnn/zoo.py` |
+| RNN search | Optuna per architecture, validation MSE, SQLite-backed (resumable), final multi-seed runs, selection rule — `rnn/tune.py` |
+| Agents | A2C, DQN, Double DQN, D3QN next to PPO — `agents/` |
+| Agent search | Optuna per agent on validation Sharpe — `tune_rl.py` |
+| Rewards | differential Sharpe, drawdown-penalised — `rewards_risk.py` |
+| Evaluation | validation-based checkpointing, one exact test backtest, all brief §4.1 metrics net of costs — `runner.py`, `metrics.py` |
+| Traceability | stable run ids, one `results.csv` row per run, weights + config + seed + commit per run, environment lock per notebook |
