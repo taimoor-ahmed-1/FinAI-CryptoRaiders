@@ -54,6 +54,21 @@ def test_factor_prediction_is_causal():
     assert d < 1e-5, f"factor prediction reads the future: {d:.3e}"
 
 
+def test_attention_mask_is_float16_safe():
+    """The causal mask must survive half precision: the GPU trains under float16 autocast.
+
+    The provided attention filled masked scores with -1e9, which does not fit in
+    float16 (max ~65504) and crashed the first training step on the T4.
+    """
+    from rltrade.rnn.models import MultiHeadAttention
+    th.manual_seed(0)
+    attn = MultiHeadAttention(48, 6, dropout=0.0).half().eval()
+    x = th.randn(2, 16, 48).half()
+    with th.no_grad():
+        y = attn(x, mask=th.tril(th.ones(16, 16)))
+    assert th.isfinite(y).all()
+
+
 def test_notebook_original_leaks():
     d = max_past_change("enhanced_legacy")
     assert d > 1e-4, "expected the notebook's unmasked-attention model to leak"
@@ -68,5 +83,7 @@ if __name__ == "__main__":
     test_every_experiment_architecture_is_causal()
     test_factor_prediction_is_causal()
     print("factor prediction path (overlapping windows): causal")
+    test_attention_mask_is_float16_safe()
+    print("causal attention mask: float16-safe")
     test_notebook_original_leaks()
     print("\nOK - every experiment architecture is causal; the notebook original leaks.")
