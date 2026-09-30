@@ -62,6 +62,18 @@ def df_markdown(df, digits=4):
     return "\n".join(lines)
 
 
+def as_datetime(t):
+    """Epoch integers -> UTC timestamps, whatever unit they were stored in.
+
+    Data prepared before the ns fix in prepare.py holds microseconds (pandas 3 parses
+    the timestamps at that resolution), so the unit is read off the magnitude.
+    """
+    t = np.asarray(t, dtype=np.int64)
+    m = np.abs(t).max() if t.size else 0
+    unit = "ns" if m > 1e17 else "us" if m > 1e14 else "ms" if m > 1e11 else "s"
+    return pd.to_datetime(t, unit=unit, utc=True)
+
+
 def _curves(out_root, run_ids, key="equity"):
     arrs, t = [], None
     for rid in run_ids:
@@ -89,7 +101,7 @@ def plot_curves(df, out_root, groups, kind="equity", title=None, ax=None, path=N
         t, a = _curves(out_root, sub["run_id"].tolist(), "drawdown" if kind == "drawdown" else "equity")
         if a is None:
             continue
-        x = pd.to_datetime(np.concatenate([[t[0]], t]), utc=True) if t is not None else np.arange(a.shape[1])
+        x = as_datetime(np.concatenate([[t[0]], t])) if t is not None else np.arange(a.shape[1])
         x = x[:a.shape[1]]
         y = (a - 1.0) * 100 if kind == "equity" else a * 100
         ax.plot(x, y.mean(0), lw=1.3, label=f"{label} (n={len(a)})")
