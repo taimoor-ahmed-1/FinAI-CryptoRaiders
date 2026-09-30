@@ -13,11 +13,13 @@ budget over several seeds, and `select` picks the architecture with the lowest
 mean validation MSE; its best-validation seed provides the factors for the RL
 experiments. Test metrics are reported alongside but never used.
 """
+import gc
 import json
 import shutil
 from pathlib import Path
 
 import numpy as np
+import torch as th
 
 from .train import RnnConfig, train_rnn
 
@@ -81,8 +83,22 @@ def tune_arch(arch, prepared_dir, out_dir, n_trials=20, max_steps=3000, max_minu
 
     def objective(trial):
         cfg = suggest_config(trial, arch, max_steps, max_minutes, seed=seed)
-        m = train_rnn(cfg, prepared_dir, out / "trials" / arch / f"{trial.number:03d}",
-                      trial=trial, verbose=False, save_factors=False)
+        oom = False
+        try:
+            m = train_rnn(cfg, prepared_dir, out / "trials" / arch / f"{trial.number:03d}",
+                          trial=trial, verbose=False, save_factors=False)
+        except th.cuda.OutOfMemoryError:
+            oom = True          # handled below, once the traceback (and its tensors) is released
+        if oom:
+            # a configuration too large for the GPU (e.g. attention over 1024 steps x batch 128)
+            # is a failed candidate, not a failed search: free the memory, prune, continue
+            gc.collect()
+            if th.cuda.is_available():
+                th.cuda.empty_cache()
+            trial.set_user_attr("oom", True)
+            print(f"  [{arch} #{trial.number}] out of GPU memory "
+                  f"(seq_len {cfg.seq_len}, batch {cfg.batch_size}) - pruned")
+            raise optuna.TrialPruned("CUDA out of memory")
         trial.set_user_attr("val_ic", m["val"]["ic_mean"])
         trial.set_user_attr("val_dir_acc", m["val"]["dir_acc_mean"])
         trial.set_user_attr("params", m["params"])
