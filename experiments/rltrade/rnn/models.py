@@ -1,6 +1,8 @@
 """
 The provided notebook's recurrent architectures, copied VERBATIM from
-`4_rnn_trainer.ipynb`. Nothing in these classes has been edited.
+`4_rnn_trainer.ipynb`, with one exception: the masked-attention fill value (see
+MultiHeadAttention.forward). The notebook never passed a mask, so that line never ran
+there; the causal model does pass one.
 
   EnhancedRnnRegNet  - the notebook's default ("current"): stacked LSTM+GRU blocks
                        with residuals and multi-head attention. Batch-first.
@@ -83,7 +85,8 @@ class MultiHeadAttention(nn.Module):
         scores = th.matmul(Q, K.transpose(-2, -1)) / (self.d_k ** 0.5)
 
         if mask is not None:
-            scores = scores.masked_fill(mask == 0, -1e9)
+            # was -1e9, which overflows float16 (max ~65504) under GPU autocast
+            scores = scores.masked_fill(mask == 0, th.finfo(scores.dtype).min)
 
         attn_weights = th.softmax(scores, dim=-1)
         attn_weights = self.dropout(attn_weights)
