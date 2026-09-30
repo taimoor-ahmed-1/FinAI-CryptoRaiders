@@ -104,7 +104,8 @@ def prepare(csv_path, prepared_dir, train_ratio=0.70, val_ratio=0.15, nrows=None
         np.savez(out / f"market_{s}.npz",
                  midpoint=df["midpoint"].to_numpy(np.float64)[a:b],
                  spread=df["spread"].to_numpy(np.float64)[a:b],
-                 time_ns=ts.astype("int64").to_numpy()[a:b],
+                 # explicit ns: pandas 3 parses these timestamps at microsecond resolution
+                 time_ns=ts.dt.as_unit("ns").astype("int64").to_numpy()[a:b],
                  **sig, **sameday)
 
     meta = {
