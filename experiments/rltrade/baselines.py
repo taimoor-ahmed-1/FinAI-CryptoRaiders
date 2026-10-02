@@ -4,6 +4,8 @@ environment as the agents, so costs, execution lag and accounting are identical.
 
     buy_and_hold   enter long at the first bar (paying the entry cost), then hold
     random         uniform random action every decision, seeded
+    cash           never trade (stay flat): the "do nothing" reference that RL
+                   checkpoints are not allowed to win with (see runner.selection_score)
 """
 import torch as th
 
@@ -22,7 +24,12 @@ def random_policy(seed, action_dim=3):
     return policy
 
 
-BASELINES = ("buy_and_hold", "random")
+def cash_policy(obs):
+    """Keep the (flat) starting position forever: action 1 = keep."""
+    return th.ones(obs.shape[0], dtype=th.long, device=obs.device)
+
+
+BASELINES = ("buy_and_hold", "random", "cash")
 
 
 def make_baseline(name, seed):
@@ -30,4 +37,6 @@ def make_baseline(name, seed):
         return buy_and_hold_policy
     if name == "random":
         return random_policy(seed)
+    if name == "cash":
+        return cash_policy
     raise ValueError(f"unknown baseline {name!r}")
