@@ -9,6 +9,11 @@ Runs one experiment configuration for one seed, end to end:
 
 The test split never influences training, checkpoint choice or hyperparameters.
 
+Checkpoints whose validation policy never trades are NOT eligible (`min_val_trades`).
+With transaction costs and a falling validation market, "stay in cash" scores Sharpe 0
+and would beat every policy that actually trades, so selection would reward agents
+that do nothing. Staying in cash is reported as its own baseline ("cash") instead.
+
 Every run has a stable id, e.g. `05_ablation/ppo_D_net_asset_change_s3`, which is
 both its folder under `<out>/models/` and its `run_id` in results.csv, so any number
 in the report traces back to one checkpoint. Runs whose metrics.json already exists
@@ -30,6 +35,15 @@ from .baselines import BASELINES, make_baseline
 from .env import EnvConfig, Market, TradingEnv, run_policy
 from .metrics import compute_metrics
 
+INVALID_SCORE = -1e6        # score of a checkpoint that is not eligible (never trades)
+
+
+def selection_score(metrics, metric="sharpe", min_trades=1):
+    """(score, eligible) of a validation backtest. Never-trading policies are ineligible."""
+    eligible = metrics["num_trades"] >= min_trades
+    return (metrics[metric] if eligible else INVALID_SCORE), eligible
+
+
 METRIC_KEYS = ("cum_return_pct", "annual_return_pct", "sharpe", "sortino", "max_drawdown_pct", "romad",
                "win_rate_pct", "round_trips", "num_trades", "turnover", "exposure_pct", "long_pct",
                "short_pct", "costs_pct", "steps")
@@ -46,6 +60,7 @@ class RunSpec:
     eval_every: int = 100_000            # transitions between validation checks
     val_chunks: int = 16                 # parallel segments for the in-training validation backtest
     select_metric: str = "sharpe"
+    min_val_trades: int = 1              # checkpoints that trade less on validation are ineligible
     tag: str = ""                        # optional extra label in the run id
 
     @property
@@ -122,7 +137,7 @@ def run(spec, prepared_dir, factor_dir, out_root, device="auto", overwrite=False
     cfg = spec.env
     mk = {s: _market(prepared_dir, factor_dir, s, cfg, dev) for s in ("train", "val", "test")}
     ppy = cfg.periods_per_year
-    val_curve, best = [], {"score": -np.inf, "step": 0, "state": None}
+    val_curve, best = [], {"score": -np.inf, "step": 0, "state": None, "eligible": None}
 
     if spec.agent in BASELINES:
         policy = make_baseline(spec.agent, spec.seed)
@@ -135,16 +150,18 @@ def run(spec, prepared_dir, factor_dir, out_root, device="auto", overwrite=False
         def callback(ag, steps):
             bt = run_policy(lambda o: ag.act(o, deterministic=True), mk["val"], cfg, chunks=spec.val_chunks)
             m = compute_metrics(bt, ppy)
-            score = m[spec.select_metric]
-            val_curve.append({"steps": steps, **{k: m[k] for k in ("sharpe", "cum_return_pct",
-                                                                   "max_drawdown_pct", "num_trades")}})
+            score, eligible = selection_score(m, spec.select_metric, spec.min_val_trades)
+            val_curve.append({"steps": steps, "eligible": eligible,
+                              **{k: m[k] for k in ("sharpe", "cum_return_pct", "max_drawdown_pct", "num_trades")}})
             if score > best["score"]:
-                best.update(score=score, step=steps,
+                best.update(score=score, step=steps, eligible=eligible,
                             state={k: {n: t.detach().cpu().clone() for n, t in v.items()}
                                    for k, v in ag.state_dict().items()})
             if verbose:
+                note = "" if eligible else " (never trades - not eligible)"
+                best_txt = f"{best['score']:+.2f}" if best["eligible"] else "none eligible yet"
                 print(f"  {spec.run_id} | {steps:>9,} steps | val sharpe {m['sharpe']:+.2f} "
-                      f"ret {m['cum_return_pct']:+.1f}% trades {m['num_trades']} | best {best['score']:+.2f}")
+                      f"ret {m['cum_return_pct']:+.1f}% trades {m['num_trades']}{note} | best {best_txt}")
             if trial is not None:
                 trial.report(score, steps)
                 if trial.should_prune():
@@ -166,6 +183,8 @@ def run(spec, prepared_dir, factor_dir, out_root, device="auto", overwrite=False
            "signal_source": cfg.signal_source, "reward": cfg.reward, "tag": spec.tag, "seed": spec.seed,
            "state_dim": cfg.state_dim, "total_steps": spec.total_steps if spec.agent not in BASELINES else 0,
            "best_step": best["step"], "select_metric": spec.select_metric,
+           "select_min_trades": spec.min_val_trades if spec.agent not in BASELINES else "",
+           "selection_eligible": best["eligible"] if spec.agent not in BASELINES else "",
            **{f"val_{k}": mets["val"][k] for k in METRIC_KEYS},
            **{f"test_{k}": mets["test"][k] for k in METRIC_KEYS},
            "fee_rate": cfg.fee_rate, "slippage": cfg.slippage, "step_gap": cfg.step_gap,

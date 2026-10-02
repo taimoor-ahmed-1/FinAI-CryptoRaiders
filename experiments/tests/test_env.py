@@ -83,6 +83,25 @@ def test_trade_executes_at_next_bar_and_state_is_current():
     assert np.isclose(float(info["eq_next"]), 300 / 200)            # marked at bar 2
 
 
+def test_cash_baseline_never_trades():
+    from rltrade.baselines import cash_policy
+    rng = np.random.default_rng(1)
+    price = 100 * np.exp(np.cumsum(rng.normal(0, 0.01, 300)))
+    d, cfg = _market(price), _cfg()
+    bt = run_policy(cash_policy, Market(d, d, "test", cfg, "cpu"), cfg)
+    m = compute_metrics(bt, cfg.periods_per_year)
+    assert m["num_trades"] == 0 and m["cum_return_pct"] == 0.0 and m["max_drawdown_pct"] == 0.0
+
+
+def test_never_trading_checkpoint_is_not_eligible():
+    from rltrade.runner import INVALID_SCORE, selection_score
+    flat = {"sharpe": 0.0, "num_trades": 0}
+    losing_trader = {"sharpe": -1.5, "num_trades": 12}
+    assert selection_score(flat) == (INVALID_SCORE, False)
+    assert selection_score(losing_trader) == (-1.5, True)
+    assert selection_score(losing_trader)[0] > selection_score(flat)[0]   # trading always outranks doing nothing
+
+
 def test_state_dims():
     for s, dim in (("A", 10), ("B", 11), ("C", 11), ("D", 12)):
         assert EnvConfig(state=s).state_dim == dim
