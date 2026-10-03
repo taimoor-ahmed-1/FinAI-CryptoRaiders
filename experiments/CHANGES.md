@@ -75,5 +75,5 @@ action space with shorting allowed, and 2 M training transitions.
 | Agent search | Optuna per agent on validation Sharpe — `tune_rl.py` |
 | Rewards | differential Sharpe, drawdown-penalised — `rewards_risk.py` |
 | Evaluation | validation-based checkpointing, one exact test backtest, all brief §4.1 metrics net of costs — `runner.py`, `metrics.py` |
-| Selection rule | checkpoints and tuning trials whose policy never trades on validation are ineligible (`min_val_trades`, default 1): in a falling validation market "do nothing" scores Sharpe 0 and would otherwise win. Reported as the `cash` baseline. Applies to runs from notebook 06 on; earlier rows record `select_min_trades` blank |
+| Selection rule | checkpoints and tuning trials whose policy trades fewer than `min_val_trades` times on validation (default 5) are ineligible: in a falling validation market "do nothing" (Sharpe 0) and "short once and hold" (1 trade) would otherwise win - notebook 06 under a 1-trade rule selected the latter for PPO, A2C, DQN and Double DQN. `cash` baseline reported alongside. Results record `select_min_trades`; 06 results under the 1-trade rule are kept as `06_agents`, the 5-trade rerun is `06_agents_mt5` |
 | Traceability | stable run ids, one `results.csv` row per run, weights + config + seed + commit per run, environment lock per notebook |
