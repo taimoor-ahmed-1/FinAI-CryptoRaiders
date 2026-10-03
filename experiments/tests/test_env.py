@@ -100,6 +100,11 @@ def test_never_trading_checkpoint_is_not_eligible():
     assert selection_score(flat) == (INVALID_SCORE, False)
     assert selection_score(losing_trader) == (-1.5, True)
     assert selection_score(losing_trader)[0] > selection_score(flat)[0]   # trading always outranks doing nothing
+    one_bet = {"sharpe": 1.8, "num_trades": 1}                           # short once and hold
+    assert selection_score(one_bet, min_trades=5) == (INVALID_SCORE, False)
+    assert selection_score(losing_trader, min_trades=5) == (-1.5, True)
+    from rltrade.runner import RunSpec
+    assert RunSpec("x", "ppo").min_val_trades == 5
 
 
 def test_state_dims():
