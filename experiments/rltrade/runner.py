@@ -9,10 +9,11 @@ Runs one experiment configuration for one seed, end to end:
 
 The test split never influences training, checkpoint choice or hyperparameters.
 
-Checkpoints whose validation policy never trades are NOT eligible (`min_val_trades`).
-With transaction costs and a falling validation market, "stay in cash" scores Sharpe 0
-and would beat every policy that actually trades, so selection would reward agents
-that do nothing. Staying in cash is reported as its own baseline ("cash") instead.
+Checkpoints that trade fewer than `min_val_trades` times on validation (default 5) are
+NOT eligible. With transaction costs and a falling validation market, "stay in cash"
+(0 trades, Sharpe 0) and "short once and hold" (1 trade) beat every policy that
+actually trades, so selection would reward a do-nothing or one-off directional bet
+rather than trading. Staying in cash is reported as its own baseline ("cash").
 
 Every run has a stable id, e.g. `05_ablation/ppo_D_net_asset_change_s3`, which is
 both its folder under `<out>/models/` and its `run_id` in results.csv, so any number
@@ -60,7 +61,7 @@ class RunSpec:
     eval_every: int = 100_000            # transitions between validation checks
     val_chunks: int = 16                 # parallel segments for the in-training validation backtest
     select_metric: str = "sharpe"
-    min_val_trades: int = 1              # checkpoints that trade less on validation are ineligible
+    min_val_trades: int = 5              # checkpoints that trade less on validation are ineligible
     tag: str = ""                        # optional extra label in the run id
 
     @property
