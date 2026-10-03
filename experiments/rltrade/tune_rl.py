@@ -17,7 +17,7 @@ import dataclasses
 from pathlib import Path
 
 from .env import EnvConfig
-from .runner import INVALID_SCORE, RunSpec, run
+from .runner import INVALID_SCORE, SELECTION_RULE, RunSpec, run
 
 NETS = {"small": (128, 128), "medium": (256, 256, 128), "notebook": (256, 256, 128, 128, 64)}
 
@@ -62,7 +62,7 @@ def tune_agent(agent, prepared_dir, factor_dir, out_root, env_cfg=None, n_trials
     out.mkdir(parents=True, exist_ok=True)
     study = optuna.create_study(
         # _mt<k>: the eligibility rule is part of the objective, so it is part of the study's identity
-        study_name=f"rl_{agent}_{env_cfg.state}_{env_cfg.reward}_mt{min_val_trades}",
+        study_name=f"rl_{agent}_{env_cfg.state}_{env_cfg.reward}_mt{min_val_trades}_r{SELECTION_RULE}",
         storage=f"sqlite:///{out / 'optuna_rl.db'}",
         load_if_exists=True, direction="maximize", sampler=optuna.samplers.TPESampler(seed=sampler_seed),
         pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=eval_every))
@@ -80,7 +80,7 @@ def tune_agent(agent, prepared_dir, factor_dir, out_root, env_cfg=None, n_trials
         eligible = bool(row["selection_eligible"])
         print(f"  [{agent} #{trial.number}] val sharpe {row['val_sharpe']:+.3f} "
               f"ret {row['val_cum_return_pct']:+.2f}% trades {row['val_num_trades']} ({row['minutes']} min)"
-              + ("" if eligible else "  <- never traded: not eligible"))
+              + ("" if eligible else f"  <- fewer than {min_val_trades} trades: not eligible"))
         return row["val_sharpe"] if eligible else INVALID_SCORE
 
     remaining = n_trials - len(done)

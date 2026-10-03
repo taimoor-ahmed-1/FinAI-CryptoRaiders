@@ -107,6 +107,33 @@ def test_never_trading_checkpoint_is_not_eligible():
     assert RunSpec("x", "ppo").min_val_trades == 5
 
 
+def test_selector_confirms_on_the_exact_pass():
+    """The chunked screen shows one entry per segment; eligibility must come from the single pass."""
+    from rltrade.runner import INVALID_SCORE, CheckpointSelector
+    sel, calls = CheckpointSelector("sharpe", min_trades=5), []
+
+    def exact(m):
+        def f():
+            calls.append(m)
+            return m
+        return f
+
+    # enter-and-hold: 16 "trades" when chunked, 1 in the single pass -> not eligible (kept only as fallback)
+    elig, _ = sel.consider({"sharpe": 1.8, "num_trades": 16}, exact({"sharpe": 1.83, "num_trades": 1}), lambda: "hold", 1)
+    assert elig is False and sel.state == "hold" and sel.score == INVALID_SCORE and not sel.eligible
+    # an active trader replaces it, scored on the exact pass
+    elig, _ = sel.consider({"sharpe": 0.5, "num_trades": 60}, exact({"sharpe": 0.4, "num_trades": 41}), lambda: "trader", 2)
+    assert elig is True and sel.state == "trader" and sel.score == 0.4 and sel.eligible
+    # the static bet again cannot take over
+    sel.consider({"sharpe": 1.8, "num_trades": 16}, exact({"sharpe": 1.83, "num_trades": 1}), lambda: "hold2", 3)
+    assert sel.state == "trader"
+    # never trading: rejected without running the exact pass; a worse screen score is not confirmed either
+    n = len(calls)
+    assert sel.consider({"sharpe": 0.0, "num_trades": 0}, exact({}), lambda: "x", 4) == (False, None)
+    assert sel.consider({"sharpe": 0.1, "num_trades": 30}, exact({}), lambda: "y", 5) == (None, None)
+    assert len(calls) == n and sel.state == "trader"
+
+
 def test_state_dims():
     for s, dim in (("A", 10), ("B", 11), ("C", 11), ("D", 12)):
         assert EnvConfig(state=s).state_dim == dim
