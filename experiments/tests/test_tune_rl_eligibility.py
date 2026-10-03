@@ -33,7 +33,7 @@ def test_never_trading_trial_cannot_win():
     values = sorted(t.value for t in study.trials)
     assert values == [INVALID_SCORE, INVALID_SCORE, -0.8, -0.8]
     assert study.best_value == -0.8 and study.best_trial.user_attrs["val_num_trades"] == 9
-    assert all(m == 1 for m in calls) and study.study_name.endswith("_mt1")
+    assert all(m == 5 for m in calls) and study.study_name.endswith("_mt5")
 
 
 if __name__ == "__main__":
