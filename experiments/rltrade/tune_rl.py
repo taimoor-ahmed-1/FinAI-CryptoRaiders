@@ -9,9 +9,9 @@ number) never overlap the reporting seeds (0-4), and trials are not written to
 results.csv - only the final multi-seed runs are reported. Studies are stored in
 SQLite, so tuning resumes after a disconnect.
 
-A trial whose best eligible checkpoint never trades on validation scores
-INVALID_SCORE (see runner.selection_score): otherwise "do nothing" (Sharpe 0) would
-win the search in a falling validation market.
+A trial whose best checkpoint trades fewer than `min_val_trades` times (default 5)
+on validation scores INVALID_SCORE (see runner.selection_score): otherwise "do
+nothing" or a one-off directional bet would win the search in a falling market.
 """
 import dataclasses
 from pathlib import Path
@@ -55,7 +55,7 @@ def params_to_hp(agent, params):
 
 
 def tune_agent(agent, prepared_dir, factor_dir, out_root, env_cfg=None, n_trials=20,
-               total_steps=500_000, eval_every=100_000, device="auto", sampler_seed=0, min_val_trades=1):
+               total_steps=500_000, eval_every=100_000, device="auto", sampler_seed=0, min_val_trades=5):
     import optuna
     env_cfg = env_cfg or EnvConfig(state="D")
     out = Path(out_root) / "tuning"
