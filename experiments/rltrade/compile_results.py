@@ -9,6 +9,7 @@ shown (06_agents_mt5, 05_ablation_ddqn_mt5, 07_rewards, lagged signals); superse
 and the same-day (look-ahead) leak-check runs stay on Drive but are left out here.
 
     thesis_results/
+      OVERVIEW.md              one page: process, what each figure shows, data constraints
       README.md                one section per figure: what it shows, the table, how to read it
       01_...png .. 11_...png   numbered in reading order
       tables/01_...csv ..      the numbers behind each figure
@@ -481,6 +482,7 @@ def compile_all(L, out_name=OUT_NAME, verbose=True):
     for name, t in tables.items():
         t.to_csv(out / "tables" / f"{name}.csv", index=False)
     (out / "README.md").write_text(_readme(df, all_runs, tables, welch, final_info), encoding="utf-8")
+    shutil.copy2(Path(__file__).with_name("overview.md"), out / "OVERVIEW.md")   # process, figure guide, data constraints
     if verbose:
         print(f"{len(list(out.glob('*.png')))} figures, {len(tables)} tables and README.md -> {out}")
         for p in sorted(out.glob("*.png")):
@@ -519,7 +521,8 @@ def _readme(df, all_runs, tables, welch, final_info):
 **Thesis:** A Hybrid Reinforcement Learning and Large Language Model Framework for Risk-Aware
 Cryptocurrency Trading - Taimoor Ahmed, MS Data Science (SEECS-NUST).
 
-Figures are numbered in reading order (`01` ... `11`); each section below shows one figure, the table
+Start with **`OVERVIEW.md`** (one page: how the experiments were run, what each figure shows, data
+constraints). Figures are numbered in reading order (`01` ... `11`); each section below shows one figure, the table
 behind it (also in `tables/` as CSV) and how to read it. Everything here is generated from the
 experiment runs by `rltrade/compile_results.py`, so the numbers match the runs exactly.
 

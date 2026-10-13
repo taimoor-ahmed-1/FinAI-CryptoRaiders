@@ -68,6 +68,7 @@ def test_tables_and_readme():
     for i in range(1, 12):
         assert f"## {i:02d} " in readme
     assert "never learned to trade actively" in readme
+    assert "Data constraints" in (out / "OVERVIEW.md").read_text(encoding="utf-8")
 
 
 def test_leaky_and_superseded_runs_excluded():
