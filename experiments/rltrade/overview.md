@@ -54,12 +54,16 @@ only 5 seeds, differences are only meaningful where the p-value is below 0.05, a
 
 ## 3. Data constraints
 
-- **Tweets are a sample, not the full stream.** Collection used time-sliced sampling under a per-tweet
-  API cost, about 300 tweets a day. The tweet count in figure 02 therefore reflects the sampling, not
-  real market attention.
-- **LLM scores are not validated against human labels.** They follow known market regimes (more
-  bullish in the late-2024 rally, more bearish in the 2026 sell-off), but their accuracy per tweet is
-  unmeasured.
+- **Tweets are six ~20-minute snapshots per day, not the full stream.** The scraper sampled six 4-hour
+  windows a day, but the API returns newest-first, so each window's ~50 tweets come from its last ~20
+  minutes (around 03:40, 07:40, ... 23:40 UTC). The tweet count in figure 02 therefore reflects the sampling,
+  not real market attention.
+- **The daily scores are measured precisely, but not yet validated.** Split-half reliability of the daily
+  mean is 0.92 (sentiment) and 0.88 (risk), so they are consistent; whether they mean what they claim is
+  being checked against human labels on 250 tweets.
+- **The scores mostly echo recent prices.** Snapshot sentiment correlates +0.49 with the past 24 h return
+  but has no measurable relation to the next return; the only forward information is a weak link to the
+  next day's volatility (signal check, `analysis/signal_check/`).
 - **Signals are daily; decisions are every 5 minutes.** A daily signal is constant through each day,
   and it is lagged one day to avoid look-ahead, so it can carry little intraday information.
 - **Order-book depth is coarse:** 5 levels at fixed ±1-5 % from the mid price, sampled about every
