@@ -282,6 +282,34 @@ def train_rnn(cfg, prepared_dir, out_dir, trial=None, verbose=True, save_factors
     return metrics
 
 
+def export_factors(model_dir, prepared_dir, out_dir, device="auto", verbose=True):
+    """Apply an already-trained model (a `train_rnn` output folder) to another prepared dataset.
+
+    No training: the weights in `model_dir` are used as they are, and factors_{split}.npy for the
+    new dataset are written to `out_dir`, with the same causal prediction as `train_rnn`. Label
+    metrics on the new data are reported as a check of how well the model transfers.
+    """
+    model_dir, out = Path(model_dir), Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    cfg = RnnConfig(**json.loads((model_dir / "config.json").read_text()))
+    device = seeding.pick_device(device)
+    data = SeqData(prepared_dir, device)
+    net = build_rnn(cfg.arch, data.inp_dim, data.out_dim, **cfg.hp).to(device)
+    net.load_state_dict(th.load(model_dir / "best_model.pt", map_location=device))
+    factors = predict_series(net, data.x_all, cfg.seq_len, cfg.wup_dim, amp=False)
+    metrics = {"source_model": str(model_dir), "arch": cfg.arch, "seed": cfg.seed}
+    for s in SPLITS:
+        f = factors[data.offset[s]: data.offset[s] + data.length[s]]
+        np.save(out / f"factors_{s}.npy", f)
+        metrics[s] = label_metrics(f, data.y[s].cpu().numpy())
+    (out / "config.json").write_text(json.dumps(dataclasses.asdict(cfg), indent=2))
+    (out / "metrics.json").write_text(json.dumps(metrics, indent=2))
+    if verbose:
+        print(f"[rnn] {cfg.arch} s{cfg.seed} applied to {prepared_dir} | "
+              + " | ".join(f"{s}: mse {metrics[s]['mse']:.4f} ic {metrics[s]['ic_mean']:+.3f}" for s in SPLITS))
+    return metrics
+
+
 def main():
     ap = argparse.ArgumentParser(description="Train an RNN factor model on prepared data.")
     ap.add_argument("--prepared", required=True)

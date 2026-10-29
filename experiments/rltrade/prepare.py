@@ -22,6 +22,10 @@ COMPLETED day instead (day D's bars see day D-1's aggregate), which is what a li
 system could actually know. The same-day values are kept in the market files
 under `sameday__<column>` so the size of the leak can be measured, never as the
 default. The very first day has no previous day; it gets the train-period mean.
+
+signal_lag="none" is for datasets whose signals are ALREADY causal per bar (the
+contest-week news scores built by `contest.py`, rebuilt from publication times):
+they are used as they are, and `sameday__<column>` holds the same values.
 """
 import json
 import time
@@ -61,8 +65,14 @@ def split_bounds(n, train_ratio=0.70, val_ratio=0.15):
     return {"train": (0, train_end), "val": (train_end, val_end), "test": (val_end, n)}
 
 
-def prepare(csv_path, prepared_dir, train_ratio=0.70, val_ratio=0.15, nrows=None, verbose=True):
-    """Run the whole preparation. `nrows` limits the input (smoke tests only)."""
+def prepare(csv_path, prepared_dir, train_ratio=0.70, val_ratio=0.15, nrows=None, verbose=True,
+            signal_lag="day"):
+    """Run the whole preparation. `nrows` limits the input (smoke tests only).
+
+    signal_lag: "day" (daily tweet aggregates -> previous completed day) | "none" (already causal).
+    """
+    if signal_lag not in ("day", "none"):
+        raise ValueError(f"signal_lag must be 'day' or 'none', not {signal_lag!r}")
     t0 = time.time()
     out = Path(prepared_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -97,7 +107,10 @@ def prepare(csv_path, prepared_dir, train_ratio=0.70, val_ratio=0.15, nrows=None
     # --- market arrays for the trading environment ---
     ts = pd.to_datetime(df["system_time"], utc=True)
     sig_cols = [c for c in SIGNAL_COLS if c in df.columns]
-    lagged = lag_daily_signals(df, sig_cols, bounds["train"][1])
+    if signal_lag == "day":
+        lagged = lag_daily_signals(df, sig_cols, bounds["train"][1])
+    else:
+        lagged = {c: df[c].to_numpy(np.float32) for c in sig_cols}
     for s, (a, b) in bounds.items():
         sig = {c: lagged[c][a:b] for c in sig_cols}
         sameday = {f"sameday__{c}": df[c].to_numpy(np.float32)[a:b] for c in sig_cols}
@@ -121,8 +134,10 @@ def prepare(csv_path, prepared_dir, train_ratio=0.70, val_ratio=0.15, nrows=None
         "label_thresholds": "fitted on train, reused for val/test",
         "alpha101_normalisation": "1%/99% quantile clip fitted on train, mapped to [-1, 1]",
         "signal_columns": sig_cols,
-        "signal_alignment": "lagged one UTC day (bar on day D sees day D-1); same-day values "
-                            "kept as sameday__<col> for the leak comparison only",
+        "signal_alignment": ("lagged one UTC day (bar on day D sees day D-1); same-day values "
+                             "kept as sameday__<col> for the leak comparison only") if signal_lag == "day" else
+                            "as in the dataset (already causal per bar); sameday__<col> identical",
+        "signal_lag": signal_lag,
         "seconds": round(time.time() - t0, 1),
     }
     (out / "meta.json").write_text(json.dumps(meta, indent=2))
