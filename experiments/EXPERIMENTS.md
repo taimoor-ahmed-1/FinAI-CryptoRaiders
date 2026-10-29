@@ -69,3 +69,25 @@ Next:
 
 ## E8 · Final model                                         · 08_results
 Configuration chosen on validation: ___ ; test result: ___
+
+## E9 · Contest week: news signals in the ablation    2026-10-29 · 09_contest_news · exp/09-contest-news
+Why: the tweet signal is a daily aggregate that mostly echoes past prices (signal check), so
+E5 could not show an effect. The FinAI Contest 2025 Task 1 data has INTRADAY LLM signals: the
+organisers' DeepSeek scores of 279 Bitcoin news articles (HF `FinRL_BTC_news_signals`), with
+publication times, over the contest's 1-second order book (2021-04-07 → 04-13).
+Data:   `rltrade/contest.py`. 1-minute bars built like the thesis's Binance bars; signals rebuilt
+        from publication times - a bar sees only articles available before it ends, and an article
+        waits for its Yahoo URL time when that is later (236/240 agree; 4 differ). The rebuilt
+        signal matches the organisers' merged file on 97 % (sentiment) / 99 % (risk) of bars; every
+        difference comes from those conservative choices. No look-ahead in the organisers' merge
+        (bar values = last article at or before the bar, 98 %; next article: 42 %).
+Config: same pipeline, only the data changes: Alpha101 (normalisation fitted on contest train) →
+        the GRU selected in E4 applied unchanged (contest IC train/val/test +0.17/+0.19/+0.18) →
+        DDQN with the E6 hyperparameters, not re-tuned. Contest split 70/15/15 (train 4 days, val and
+        test ~20 h each). 12-hour episodes, 300k transitions, validation every 10k (exact pass),
+        ≥ 5 validation trades. States A–D at 0.10 % + 0.02 %; A and D also at 0.02 % per trade.
+        10 seeds each; buy & hold and cash at both cost levels.
+Caveat: 20-hour test window - seeds share one market path, p-values indicative only.
+Result: (paste `contest/report/README.md`)
+Reading:
+Next:
