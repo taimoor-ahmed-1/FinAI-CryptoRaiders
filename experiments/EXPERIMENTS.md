@@ -88,6 +88,22 @@ Config: same pipeline, only the data changes: Alpha101 (normalisation fitted on 
         ≥ 5 validation trades. States A–D at 0.10 % + 0.02 %; A and D also at 0.02 % per trade.
         10 seeds each; buy & hold and cash at both cost levels.
 Caveat: 20-hour test window - seeds share one market path, p-values indicative only.
-Result: (paste `contest/report/README.md`)
-Reading:
-Next:
+Result: test return net of costs, mean (median) of 10 seeds; buy & hold -0.44 % / -0.34 %.
+          0.12 %:  A -2.76 (-1.09)   B -2.71 (-0.87)   C -4.06 (-0.54)   D -0.62 (-0.81)
+                   before costs: A +0.16  B -0.02  C +0.11  D -0.11
+                   Welch on test Sharpe: B vs A p = 0.88, C vs A 0.68, D vs A 0.25, D vs B 0.22
+          0.02 %:  A -0.11 (-0.07)   D -0.51 (-0.30);  D vs A p = 0.11 (Sharpe), 0.13 (return)
+        Full tables and figures: `contest/report/` (local, not committed - built from the
+        confidential contest data).
+Reading: the news signals do not improve the agent. Before costs every state ends near zero
+        (-0.1 % to +0.2 %), so no state found an edge on the test window. The spread of the
+        net means at 0.12 % comes from 5 runs (A s7/s8, B s7, C s6/s7) whose only eligible checkpoint
+        (>= 5 validation trades) was an early, high-turnover one (134-163 trades, val Sharpe down
+        to -214): ~150 trades x 0.12 % = ~18 % in costs. Later checkpoints traded < 5 times and
+        were not eligible. D had no such run, which is why its mean looks better; its median
+        (-0.81 %) is between A's and B's. At 0.02 % the agent with both signals is, if anything,
+        worse than price only (p = 0.11). Consistent with E5: no evidence that the LLM signals
+        help, here with intraday, causally timed signals as well.
+Next:   the minimum-trades rule can force a bad checkpoint when the agent converges to
+        inactivity; a fallback to "stay flat" (or reporting both) would separate that artefact from
+        the signal question.

@@ -91,6 +91,12 @@ def report(root):
         tab = _seed_table(sub, "state", list(states), LABELS)
         elig = sub.groupby("state").selection_eligible.apply(lambda s: int((s.astype(str) == "True").sum()))
         tab["seeds_with_eligible_policy"] = [int(elig.get(s, 0)) for s in states if (sub.state == s).any()]
+        # median and before-cost return: a few high-turnover checkpoints dominate the means at 0.12 %
+        g = sub.assign(gross=sub.test_cum_return_pct + sub.test_costs_pct).groupby("state")
+        present = [s for s in states if (sub.state == s).any()]
+        tab["test_return_%_median"] = g.test_cum_return_pct.median().reindex(present).to_numpy()
+        tab["test_return_before_costs_%_mean"] = g.gross.mean().reindex(present).to_numpy()
+        tab["test_costs_%_mean"] = g.test_costs_pct.mean().reindex(present).to_numpy()
         tests = _tests(sub, [p for p in PAIRS if set(p) <= set(states)])
         tables[f"{num}_ablation_{name}_costs"], tables[f"{num}_tests_{name}_costs"] = tab, tests
         sh = tests[tests.metric == "test_sharpe"]
