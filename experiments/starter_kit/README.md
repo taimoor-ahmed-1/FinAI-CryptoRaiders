@@ -54,3 +54,26 @@ episodes, learning rate 2e-6, γ 0.995, soft update 2e-6, ε 0.005, network (128
 75,840 steps × envs, 4096 parallel envs, majority vote (ties: the first member's action), Sharpe = mean / std of
 per-step returns (not annualised). `kit_pipeline.py` halves the number of envs when the replay buffer (~24 GB
 at 4096) does not fit the GPU; the value used is in `runs/<run>/config.json`.
+
+## Experiment 11: with the DeepSeek news signals
+
+`news_signals.py` maps the organisers' DeepSeek scores of the week's news (HF `SecureFinAI-Lab/FinRL_BTC_news_signals`,
+279 articles) onto every second; `--signals` adds them to the state (2 + 8 + 2, as the kit had). Everything
+else is experiment 10, so `runs/shipped` is the price-only comparison. Run it with
+`notebooks/11_starter_kit_news.ipynb`, or
+
+```bash
+python kit_pipeline.py news     --csv BTC_1sec.csv --news news_train.csv --data prepared
+python kit_pipeline.py ensemble --data prepared --run runs/news_decay --signals
+python kit_pipeline.py evaluate --data prepared --run runs/news_decay --split test
+```
+
+| | kit (organisers' merged csv) | `news_signals.py` |
+|---|---|---|
+| articles | all | the 232 that mention bitcoin / crypto in the title or the first 600 characters |
+| usable from | publication time | max(publication, Yahoo URL time) + 60 s, causal |
+| value at second t | latest article's score, held | sum w_i (score_i - centre) / (1 + sum w_i), w_i = confidence_i * 2^(-age_i / 1 h) |
+| no recent news | last score held for hours | fades to 0 = the train-period mean score |
+| scale | 1-5 | / the train 99th percentile of \|s\|, clipped to [-1, 1] |
+
+The settings (half-life, latency, prior, keyword list) were fixed before any training; none was tuned.

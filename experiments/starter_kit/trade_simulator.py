@@ -19,6 +19,7 @@ class TradeSimulator:
         data_dir=None,
         split="train",
         stop_loss_rate=1e-3,
+        signals=False,
     ):
         self.device = th.device(f"cuda:{gpu_id}") if gpu_id >= 0 else device
         self.num_sims = num_sims
@@ -49,6 +50,12 @@ class TradeSimulator:
         self.seq_len = 3600
         self.full_seq_len = self.price_ary.shape[0]
         assert self.price_ary.shape[0] == self.factor_ary.shape[0]
+        # [news] the DeepSeek sentiment / risk of the news, row-aligned like the factors (news_signals.py);
+        # the kit read them from the organisers' merged csv (latest article held until the next one)
+        self.signals_ary = None
+        if signals:
+            self.signals_ary = th.tensor(np.load(args.signals_ary_path)[self.row0:self.row1], dtype=th.float32)
+            assert self.signals_ary.shape == (self.factor_ary.shape[0], 2)
         self.fixed_starts = None  # [fix] evaluation sets the episode start rows (the kit drew them at random)
 
         # reset()
@@ -67,7 +74,8 @@ class TradeSimulator:
 
         # environment information
         self.env_name = "TradeSimulator-v0"
-        self.state_dim = 2 + 8  # [baseline] (position, holding) + factor_dim; price only, no DeepSeek signals
+        # (position, holding) + factor_dim [+ DeepSeek sentiment, risk]; [baseline] E10 runs without signals
+        self.state_dim = 2 + 8 + (2 if signals else 0)
         self.action_dim = 3  # short, nothing, long
         self.if_discrete = True
         self.max_step = (self.seq_len - num_ignore_step) // step_gap
@@ -216,16 +224,15 @@ class TradeSimulator:
 
     def get_state(self, step_is_cpu):
         factor_ary = self.factor_ary[step_is_cpu, :].to(self.device)
-
-        return th.concat(
-            (
-                (self.position.float() / self.max_position)[:, None],
-                (self.holding.float() / self.max_holding)[:, None],
-                # (self.empty_count.float() / self.max_empty_count)[:, None],
-                factor_ary,
-            ),
-            dim=1,
+        parts = (
+            (self.position.float() / self.max_position)[:, None],
+            (self.holding.float() / self.max_holding)[:, None],
+            # (self.empty_count.float() / self.max_empty_count)[:, None],
+            factor_ary,
         )
+        if self.signals_ary is not None:  # [news]
+            parts += (self.signals_ary[step_is_cpu, :].to(self.device),)
+        return th.concat(parts, dim=1)
 
 
 def window_starts(n_rows, span, first=3600):

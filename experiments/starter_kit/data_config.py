@@ -16,6 +16,7 @@ class ConfigData:
         self.predict_ary_path = f"{data_dir}/BTC_1sec_predict.npy"  # RNN factors, all rows
         self.predict_net_path = f"{data_dir}/BTC_1sec_predict.pth"
         self.splits_path = f"{data_dir}/splits.json"  # {"train": [r0, r1], "val": ..., "test": ...}
+        self.signals_ary_path = f"{data_dir}/BTC_1sec_signals.npy"  # [news] sentiment, risk per row (news_signals.py)
 
     def split_rows(self, split: str):
         with open(self.splits_path) as f:

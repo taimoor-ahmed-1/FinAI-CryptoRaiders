@@ -36,7 +36,7 @@ class EnsembleEvaluator:
         self.agents = []
         self.thresh = 0.001
         self.num_envs = 1
-        self.state_dim = 2 + 8  # [baseline] price only
+        self.state_dim = args.state_dim  # 2 + 8 [+ 2 news signals]
         self.device = torch.device(f"cuda" if torch.cuda.is_available() else "cpu")
 
         self.trade_env = build_env(args.env_class, args.env_args, gpu_id=args.gpu_id)
@@ -175,7 +175,7 @@ def curve_metrics(net):
 
 
 def run_evaluation(save_path, agent_list=None, gpu_id=None, data_dir=None, split="test", out_dir=None,
-                   slippage=7e-7, stop_loss_rate=1e-3):
+                   slippage=7e-7, stop_loss_rate=1e-3, signals=False):
     """[fix] Scores the ensemble on EVERY consecutive 79-minute episode of `split` (the kit scored one random
     episode, of the training file). Curves per episode, each from $1M:
         sim      the simulator's account: position -1/0/+1 BTC, slippage, stop-loss - the headline
@@ -202,7 +202,7 @@ def run_evaluation(save_path, agent_list=None, gpu_id=None, data_dir=None, split
         "env_name": "TradeSimulator-v0",
         "num_envs": num_sims,
         "max_step": max_step,
-        "state_dim": 2 + 8,  # [baseline] no LLM signals
+        "state_dim": 2 + 8 + (2 if signals else 0),  # [baseline] no LLM signals; [news] + sentiment, risk
         "action_dim": 3,
         "if_discrete": True,
         "max_position": max_position,
@@ -212,6 +212,7 @@ def run_evaluation(save_path, agent_list=None, gpu_id=None, data_dir=None, split
         "data_dir": data_dir,  # [fix] the kit's "dataset_path" was never read by the simulator
         "split": split,
         "stop_loss_rate": stop_loss_rate,
+        "signals": signals,
     }
     args = Config(agent_class=None, env_class=EvalTradeSimulator, env_args=env_args)
     args.gpu_id = gpu_id
@@ -258,7 +259,8 @@ def run_evaluation(save_path, agent_list=None, gpu_id=None, data_dir=None, split
     pd.DataFrame(summary).to_csv(f"{out_dir}/summary.csv", index=False)
     with open(f"{out_dir}/summary.json", "w") as f:
         json.dump({"split": split, "rows": [r0, r1], "members": [d for d, _ in member_dirs(save_path)],
-                   "slippage": slippage, "stop_loss_rate": stop_loss_rate, "curves": summary}, f, indent=1)
+                   "slippage": slippage, "stop_loss_rate": stop_loss_rate, "signals": signals, "curves": summary},
+                  f, indent=1)
     print(pd.DataFrame(summary).to_string(index=False))
     return summary
 

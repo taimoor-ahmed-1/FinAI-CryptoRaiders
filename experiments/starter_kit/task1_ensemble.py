@@ -72,7 +72,7 @@ class Ensemble:
         self.agents = []
         self.thresh = 0.001
         self.num_envs = 1
-        self.state_dim = 2 + 8  # [baseline] price only
+        self.state_dim = args.state_dim  # 2 + 8 [+ 2 news signals]
         # gpu_id = 0
         self.device = torch.device(f"cuda" if torch.cuda.is_available() else "cpu")
         eval_env_class = args.eval_env_class
@@ -272,7 +272,7 @@ class Ensemble:
 
 
 def run(save_path, agent_list, log_rules=False, gpu_id=None, break_step=int(32e4), num_sims=2**12,
-        slippage=7e-7, seed=0, data_dir=None, stop_loss_rate=1e-3):
+        slippage=7e-7, seed=0, data_dir=None, stop_loss_rate=1e-3, signals=False):
     """[fix] the settings are arguments; defaults are the kit's, with break_step restored to 32e4 (its TODO)"""
     import sys
 
@@ -291,7 +291,7 @@ def run(save_path, agent_list, log_rules=False, gpu_id=None, break_step=int(32e4
         "env_name": "TradeSimulator-v0",
         "num_envs": num_sims,
         "max_step": max_step,
-        "state_dim": 2 + 8,  # [baseline] (position, holding) + factor_dim; price only
+        "state_dim": 2 + 8 + (2 if signals else 0),  # (position, holding) + factor_dim [+ news; baseline: none]
         "action_dim": 3,  # long, 0, short
         "if_discrete": True,
         "max_position": max_position,
@@ -301,6 +301,7 @@ def run(save_path, agent_list, log_rules=False, gpu_id=None, break_step=int(32e4
         "data_dir": data_dir,
         "split": "train",
         "stop_loss_rate": stop_loss_rate,
+        "signals": signals,  # [news]
     }
     args = Config(agent_class=AgentD3QN, env_class=TradeSimulator, env_args=env_args)
     args.gpu_id = gpu_id

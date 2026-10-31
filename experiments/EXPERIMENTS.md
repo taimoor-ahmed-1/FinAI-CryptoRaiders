@@ -123,4 +123,41 @@ Config: Alpha101 over the whole 1-second file (causal), scaled with train quanti
         TwinD3QN, kit hyperparameters, 320k steps each, 4096 envs (fewer if the GPU is small),
         best checkpoint on all 14 validation episodes -> majority vote, test once on its 14
         consecutive 79-minute episodes. Slippage 7e-7 as shipped; 1 BTC position on $1M.
+Run:    Colab A100-40GB, 4096 envs (as shipped), 2026-10-31 18:28 -> 22:54, ~63-74 min per member.
+        Best validation return per 79-min episode: D3QN $578 (step 322k, the last one - still
+        rising), DoubleDQN $108 (228k), DoubleDQN $130 (294k), TwinD3QN $520 (275k). All four sat
+        at "hold" ($0) for the first ~100-150k steps; the 3 that were identical as shipped now differ.
+Result: chained 79-min episodes, 14 each, $1M, 1 BTC position, slippage 7e-7 (simulator account):
+                      return    Sharpe/step   max DD    trades   episodes > 0
+          val         +0.773 %     0.042      -0.036 %   3,334
+          test        +0.757 %     0.037      -0.093 %   3,514     12 / 14
+          B&H 1 BTC   -0.021 %    -0.001      -0.137 %             7 / 14   (test)
+          B&H full    -0.338 %    -0.001      -2.26 %              7 / 14   (test)
+        Full tables and figures: Drive `starter_kit/runs/shipped/` (not committed).
+Reading: with the bugs fixed the kit trades actively and earns a small, steady gross edge that
+        holds out of sample (test = validation, 12 of 14 episodes positive) while the market fell.
+        But it is ~$2.2 per round of trading on ~$57k notional (~0.4 bp), executed at the mid with
+        ~zero cost; the simulator charges no spread or fee. At any realistic cost (taker fee
+        ~4-10 bp; the thesis uses 12 bp) ~3,500 trades cost far more than the edge (at 12 bp ~ -24 %).
+        So the shipped baseline is a frictionless result: it shows the factors carry very
+        short-horizon information, not a tradable strategy.
+Next:   the same run at slippage 1.2e-3 (notebook's RUN_REALISTIC cell) to measure the net result;
+        a longer budget (two members peaked at the last checks).
+
+## E11 · Contest starter kit with the DeepSeek news signals   2026-11-01 · 11_starter_kit_news · exp/11-kit-news
+Why: E10 gives the kit's own pipeline, fixed, on price only. The kit was built to add the organisers'
+        DeepSeek sentiment / risk scores of the week's news to the state; does that help, with the
+        scores mapped onto the 1-second data properly?
+Mapping: `starter_kit/news_signals.py`. The organisers held the latest article's score until the next
+        one (E9 did the same, causally). Here: the 232 of 279 articles that mention bitcoin / crypto;
+        usable from max(publication, Yahoo URL time) + 60 s; per second a decayed, confidence-weighted
+        mean of (score - train mean), half-life 1 h, with a neutral prior weight of 1, so it fades to 0
+        between articles and several agreeing articles count more than one; scaled by the train 99th
+        percentile of |s|. Fixed in advance. Brute-force causality check: 324 rows, 0 mismatches.
+Config: identical to E10 (same prepared data and RNN factors, members, seeds, 320k steps, 4096 envs,
+        slippage 7e-7, validation selection, 14 test episodes) + 2 state inputs. Compared with
+        `runs/shipped`. Runs on a second Colab runtime alongside E10's 0.12 % run.
+Caveat: one ensemble against one ensemble on a 20-hour test window: a difference shows what the signals
+        did here, not a significant effect. RL training is chaotic, so the extra inputs alone change every
+        trajectory.
 Result: (pending - Colab run)
