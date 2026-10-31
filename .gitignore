@@ -77,3 +77,11 @@ Thumbs.db
 results/
 logs/
 checkpoints/
+
+# Starter kit (experiment 10): data and runs stay on Drive / local, never in git
+experiments/starter_kit/prepared/
+experiments/starter_kit/runs/
+experiments/starter_kit/data/
+experiments/starter_kit/ensemble_teamname/
+experiments/starter_kit/TradeSimulator-v0_*/
+experiments/starter_kit/output/

@@ -91,7 +91,7 @@ class AgentDoubleDQN:
             if if_save:
                 torch.save(getattr(self, attr_name), file_path)
             elif os.path.isfile(file_path):
-                setattr(self, attr_name, torch.load(file_path, map_location=self.device))
+                setattr(self, attr_name, torch.load(file_path, map_location=self.device, weights_only=False))  # [fix] torch>=2.6
 
     def explore_env(self, env, horizon_len: int, if_random: bool = False) -> Tuple[Tensor, ...]:
         """
@@ -113,8 +113,10 @@ class AgentDoubleDQN:
 
         state = self.last_state  # last_state.shape = (num_envs, state_dim) for a vectorized env.
 
-        # get_action = self.act.get_action # TODO check
-        get_action = self.act_target.get_action
+        # [fix] explore with the online network (the kit's TODO). The kit explored with act_target, which moves
+        # at soft_update_tau = 2e-6 per update (about 2 % per 10k updates, so the data came from a network far
+        # behind the one being trained) and kept QNet's default explore_rate 0.125, not args.explore_rate.
+        get_action = self.act.get_action
         for t in range(horizon_len):
             action = torch.randint(self.action_dim, size=(self.num_envs, 1)) if if_random \
                 else get_action(state).detach()  # different
@@ -199,7 +201,7 @@ class AgentDoubleDQN:
         horizon_len = rewards.shape[0]
 
         last_state = self.last_state
-        next_value = self.act_target(last_state).argmax(dim=1).detach()  # actor is Q Network in DQN style
+        next_value = self.act_target(last_state).max(dim=1)[0].detach()  # [fix] max Q value; the kit used the argmax index
         for t in range(horizon_len - 1, -1, -1):
             returns[t] = next_value = rewards[t] + masks[t] * next_value
         return returns

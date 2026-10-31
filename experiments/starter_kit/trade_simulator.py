@@ -16,6 +16,9 @@ class TradeSimulator:
         num_ignore_step=60,
         device=th.device("cpu"),
         gpu_id=-1,
+        data_dir=None,
+        split="train",
+        stop_loss_rate=1e-3,
     ):
         self.device = th.device(f"cuda:{gpu_id}") if gpu_id >= 0 else device
         self.num_sims = num_sims
@@ -28,35 +31,28 @@ class TradeSimulator:
         self.sim_ids = th.arange(self.num_sims, device=self.device)
 
         """config"""
-        args = ConfigData()
+        args = ConfigData(data_dir)
+        self.split = split
+        self.row0, self.row1 = args.split_rows(split)  # [fix] this env only sees its own split's rows
 
         """load data"""
-        self.factor_ary = np.load(args.predict_ary_path)
+        # [fix] factors and prices are row-aligned arrays over the whole file (seq_data / seq_run). The kit's
+        # factor file was 900 rows shorter than the prices (the label horizon) and was aligned with the
+        # REAR of the prices, so the agent at second t saw the RNN forecast made at t - 900 s - a forecast
+        # whose horizon had already elapsed. Row t's factors now sit next to row t's price.
+        self.factor_ary = np.load(args.predict_ary_path)[self.row0:self.row1]
         self.factor_ary = th.tensor(self.factor_ary, dtype=th.float32)  # CPU
 
-        data_df = pd.read_csv(args.csv_path)  # CSV READ HERE
-
-        self.price_ary = data_df[["bids_distance_3", "asks_distance_3", "midpoint"]].values
-        self.price_ary[:, 0] = self.price_ary[:, 2] * (1 + self.price_ary[:, 0])
-        self.price_ary[:, 1] = self.price_ary[:, 2] * (1 + self.price_ary[:, 1])
-
-        self.llm_signals = data_df[["sentiment_score", "risk_score"]].values
-        
-
-        """Align with the rear of the dataset instead"""
-        # self.price_ary = self.price_ary[: self.factor_ary.shape[0], :]
-        self.price_ary = self.price_ary[-self.factor_ary.shape[0] :, :]
-        self.llm_signals = self.llm_signals[-self.factor_ary.shape[0] :, :]
-
-        self.price_ary = th.tensor(self.price_ary, dtype=th.float32)  # CPU        
-        self.llm_signals = th.tensor(self.llm_signals, dtype=th.float32) #CPU
+        self.price_ary = np.load(args.price_ary_path)[self.row0:self.row1]  # bid, ask, mid
+        self.price_ary = th.tensor(self.price_ary, dtype=th.float32)  # CPU
 
         self.seq_len = 3600
         self.full_seq_len = self.price_ary.shape[0]
         assert self.price_ary.shape[0] == self.factor_ary.shape[0]
-        assert self.llm_signals.shape[0] == self.factor_ary.shape[0]
+        self.fixed_starts = None  # [fix] evaluation sets the episode start rows (the kit drew them at random)
 
         # reset()
+        device = self.device  # [fix] the kit put these on the `device` argument (CPU) even on a GPU
         self.step_i = 0
         self.step_is = th.zeros((num_sims,), dtype=th.long, device=device)
         self.action_int = th.zeros((num_sims,), dtype=th.long, device=device)
@@ -71,7 +67,7 @@ class TradeSimulator:
 
         # environment information
         self.env_name = "TradeSimulator-v0"
-        self.state_dim = 2 + 8 + 2 # (position, holding) + factor_dim +  DeepSeek engineered signals
+        self.state_dim = 2 + 8  # [baseline] (position, holding) + factor_dim; price only, no DeepSeek signals
         self.action_dim = 3  # short, nothing, long
         self.if_discrete = True
         self.max_step = (self.seq_len - num_ignore_step) // step_gap
@@ -79,7 +75,10 @@ class TradeSimulator:
 
         """stop-loss"""
         self.best_price = th.zeros((num_sims,), dtype=th.float32, device=device)
-        self.stop_loss_thresh = 1e-3
+        # [fix] a fraction of the price (the kit's commented-out `mid_price * stop_loss_rate`). The kit used an
+        # absolute $0.001 in training and $0.0001 in evaluation, i.e. ~1e-8 of a $60k BTC price, so any adverse
+        # tick closed the position - and training and evaluation used different rules.
+        self.stop_loss_rate = stop_loss_rate
 
     def _reset(self, slippage=None, _if_random=True):
         self.slippage = slippage if isinstance(slippage, float) else self.slippage
@@ -88,7 +87,10 @@ class TradeSimulator:
         device = self.device
 
         # if if_random:
-        i0s = np.random.randint(self.seq_len, self.full_seq_len - self.seq_len * 2, size=self.num_sims)
+        if self.fixed_starts is None:
+            i0s = np.random.randint(self.seq_len, self.full_seq_len - self.seq_len * 2, size=self.num_sims)
+        else:
+            i0s = np.asarray(self.fixed_starts).reshape(self.num_sims)
         self.step_i = 0
         self.step_is = th.tensor(i0s, dtype=th.long, device=self.device)
         self.cash = th.zeros((num_sims,), dtype=th.float32, device=device)
@@ -167,9 +169,9 @@ class TradeSimulator:
             )[0]
             self.best_price[direction_mask2] = _best_price
 
-        # stop_loss_thresh = mid_price * self.stop_loss_rate
-        stop_loss_mask1 = th.logical_and(direction_mask1, (self.best_price - mid_price).gt(self.stop_loss_thresh))
-        stop_loss_mask2 = th.logical_and(direction_mask2, (mid_price - self.best_price).gt(self.stop_loss_thresh))
+        stop_loss_thresh = mid_price * self.stop_loss_rate  # [fix] relative, see __init__
+        stop_loss_mask1 = th.logical_and(direction_mask1, (self.best_price - mid_price).gt(stop_loss_thresh))
+        stop_loss_mask2 = th.logical_and(direction_mask2, (mid_price - self.best_price).gt(stop_loss_thresh))
         stop_loss_mask = th.logical_or(stop_loss_mask1, stop_loss_mask2)
         if stop_loss_mask.sum() > 0:
             action_int[stop_loss_mask] = -old_position[stop_loss_mask]
@@ -214,8 +216,6 @@ class TradeSimulator:
 
     def get_state(self, step_is_cpu):
         factor_ary = self.factor_ary[step_is_cpu, :].to(self.device)
-        llm_signals = self.llm_signals[step_is_cpu, :].to(self.device)
-
 
         return th.concat(
             (
@@ -223,16 +223,21 @@ class TradeSimulator:
                 (self.holding.float() / self.max_holding)[:, None],
                 # (self.empty_count.float() / self.max_empty_count)[:, None],
                 factor_ary,
-                llm_signals,
             ),
             dim=1,
         )
 
 
+def window_starts(n_rows, span, first=3600):
+    """[fix] start rows of the consecutive, non-overlapping episodes that fit in a split (each `span` rows long).
+    The first hour is skipped, as in the kit's random starts (randint(seq_len, ...))."""
+    return list(range(first, n_rows - span - 1, span))
+
+
 class EvalTradeSimulator(TradeSimulator):
 
     def reset(self, slippage=None, date_strs=()):
-        self.stop_loss_thresh = 1e-4
+        # [fix] same stop-loss as in training (the kit switched to $1e-4 here)
         return self._reset(slippage=slippage, _if_random=False)
 
     def step(self, action):

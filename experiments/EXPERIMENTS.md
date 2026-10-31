@@ -107,3 +107,20 @@ Reading: the news signals do not improve the agent. Before costs every state end
 Next:   the minimum-trades rule can force a bad checkpoint when the agent converges to
         inactivity; a fallback to "stay flat" (or reporting both) would separate that artefact from
         the signal question.
+
+## E10 · Contest starter kit, bugs fixed (price only)   2026-10-31 · 10_starter_kit_baseline · exp/10-starter-kit
+Why: the organisers' own Task 1 pipeline is the natural baseline for the contest data. As shipped
+        (`break_step = 32`, run locally on a held-out 70/15/15 split) it never trades: return 0,
+        drawdown 0, Sharpe undefined over all 14 test episodes; buy & hold 1 BTC -0.005 %.
+Code:   `starter_kit/` - commit 428db91 is the kit unmodified (MIT); every change is marked `[fix]`
+        and listed in `starter_kit/README.md`. Main ones: break_step 32 -> 32e4 (the kit's TODO);
+        factors were 900 rows (15 min) stale against prices; the 4 ensemble members shared one seed
+        (3 were identical) and one was overwritten on save; exploration used the target network;
+        the checkpoint was scored on training data and then discarded; the stop-loss was an
+        absolute $0.001 on a $60k price; the evaluator priced trades at the episode counter.
+Config: Alpha101 over the whole 1-second file (causal), scaled with train quantiles -> the kit's
+        LSTM+GRU (fit on the first 60 % of train, early-stopped on the rest) -> D3QN, DoubleDQN x2,
+        TwinD3QN, kit hyperparameters, 320k steps each, 4096 envs (fewer if the GPU is small),
+        best checkpoint on all 14 validation episodes -> majority vote, test once on its 14
+        consecutive 79-minute episodes. Slippage 7e-7 as shipped; 1 BTC position on $1M.
+Result: (pending - Colab run)

@@ -1,6 +1,9 @@
 import numpy as np
 import pandas as pd
-import empyrical as ep
+try:
+    import empyrical as ep
+except ImportError:  # [fix] empyrical 0.5.5 does not install on Python 3.12 (Colab)
+    import empyrical_compat as ep
 
 def cumulative_returns(returns_pct):
     """

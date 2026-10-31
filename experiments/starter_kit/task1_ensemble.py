@@ -1,11 +1,14 @@
 import os
+import json
 import time
+from copy import deepcopy
 import torch
 import numpy as np
 from erl_config import Config, build_env
 from erl_replay_buffer import ReplayBuffer
 from erl_evaluator import Evaluator
-from trade_simulator import TradeSimulator, EvalTradeSimulator
+from trade_simulator import TradeSimulator, EvalTradeSimulator, window_starts
+from data_config import ConfigData
 from erl_agent import AgentD3QN, AgentDoubleDQN, AgentTwinD3QN
 from collections import Counter
 
@@ -69,7 +72,7 @@ class Ensemble:
         self.agents = []
         self.thresh = 0.001
         self.num_envs = 1
-        self.state_dim = 2 + 8 + 2
+        self.state_dim = 2 + 8  # [baseline] price only
         # gpu_id = 0
         self.device = torch.device(f"cuda" if torch.cuda.is_available() else "cpu")
         eval_env_class = args.eval_env_class
@@ -85,28 +88,46 @@ class Ensemble:
 
         self.firstbpi = True
 
+    def member_dir(self, idx):
+        # [fix] one folder per member: the kit used the class name, so the second AgentDoubleDQN overwrote
+        # the first, and task1_eval.py then loaded only 3 of the 4 trained agents
+        return os.path.join(self.save_path, "ensemble_models", f"{idx}_{self.agent_classes[idx].__name__}")
+
+    def save_member(self, idx, agent):
+        agent_dir = self.member_dir(idx)
+        os.makedirs(agent_dir, exist_ok=True)
+        agent.save_or_load_agent(agent_dir, if_save=True)
+        with open(os.path.join(agent_dir, "selection.json"), "w") as f:  # written last: marks the member done
+            json.dump(agent.selection, f, indent=1)
+
     def save_ensemble(self):
         """Saves the ensemble of agents to a directory."""
-        ensemble_dir = os.path.join(self.save_path, "ensemble_models")
-        os.makedirs(ensemble_dir, exist_ok=True)
         for idx, agent in enumerate(self.agents):
-            agent_name = self.agent_classes[idx].__name__
-            agent_dir = os.path.join(ensemble_dir, agent_name)
-            os.makedirs(agent_dir, exist_ok=True)
-            agent.save_or_load_agent(agent_dir, if_save=True)
-        print(f"Ensemble models saved in directory: {ensemble_dir}")
+            self.save_member(idx, agent)
+        print(f"Ensemble models saved in directory: {os.path.join(self.save_path, 'ensemble_models')}")
 
     def ensemble_train(self):
         args = self.args
 
-        for agent_class in self.agent_classes:
+        base_seed = args.random_seed
+        for idx, agent_class in enumerate(self.agent_classes):
+            if os.path.exists(os.path.join(self.member_dir(idx), "selection.json")):
+                # [fix] each member is saved as soon as it is trained, so a re-run after a Colab disconnect
+                # resumes with the next member (the kit saved all of them only at the very end)
+                print(f"| member {idx} {agent_class.__name__} already trained, skipped")
+                continue
 
             args.agent_class = agent_class
+            # [fix] a seed and a folder per member. The kit gave every member the same seed and, because
+            # Config.cwd is set only once, the same training folder; AgentDoubleDQN (twice) and AgentTwinD3QN
+            # (the same network, QNetTwin) therefore trained into identical weights.
+            args.random_seed = base_seed + idx
+            args.cwd = os.path.join(self.save_path, f"train_{idx}_{agent_class.__name__}")
 
             agent = self.train_agent(args=args)
-            self.agents.append(agent)
+            self.save_member(idx, agent)
 
-        self.save_ensemble()
+        print(f"Ensemble models saved in directory: {os.path.join(self.save_path, 'ensemble_models')}")
 
     def _majority_vote(self, actions):
         """handles tie breaks by returning first element of the most common ones"""
@@ -168,9 +189,17 @@ class Ensemble:
 
         """init evaluator"""
         eval_env_class = args.eval_env_class if args.eval_env_class else args.env_class
-        eval_env_args = args.eval_env_args if args.eval_env_args else args.env_args
+        eval_env_args = dict(args.eval_env_args if args.eval_env_args else args.env_args)
+        # [fix] score every consecutive episode of the validation split, the same windows each time. The kit's
+        # Ensemble.__init__ had set eval_env_args to 1 env in place, so it scored 3 random windows per round.
+        r0, r1 = ConfigData(eval_env_args.get("data_dir")).split_rows(eval_env_args["split"])
+        n_val = r1 - r0
+        val_starts = window_starts(n_val, args.max_step * eval_env_args["step_gap"])
+        eval_env_args.update(num_envs=len(val_starts), num_sims=len(val_starts))
         eval_env = build_env(eval_env_class, eval_env_args, args.gpu_id)
+        eval_env.fixed_starts = val_starts
         evaluator = Evaluator(cwd=args.cwd, env=eval_env, args=args)
+        evaluator.eval_times = len(val_starts)  # one pass over the windows (not args: it sizes the warm-up)
 
         """train loop"""
         cwd = args.cwd
@@ -178,9 +207,14 @@ class Ensemble:
         horizon_len = args.horizon_len
         if_off_policy = args.if_off_policy
         if_save_buffer = args.if_save_buffer
+        args_seed = args.random_seed
         del args
 
         import torch as th
+
+        # [fix] keep the actor with the best VALIDATION return. The kit's evaluator scored on the training data
+        # and its best checkpoint was never used: the final weights were saved whatever happened.
+        best_val, best_state, best_step = -float("inf"), None, 0
 
         if_train = True
         while if_train:
@@ -214,9 +248,18 @@ class Ensemble:
                 exp_r=exp_r,
                 logging_tuple=logging_tuple,
             )
+            val_r = evaluator.recorder[-1][1]  # mean episode return on the validation split
+            if val_r > best_val:
+                best_val, best_step = val_r, evaluator.total_step
+                best_state = deepcopy(agent.act.state_dict())
             if_train = (evaluator.total_step <= break_step) and (not os.path.exists(f"{cwd}/stop"))
 
         print(f"| UsedTime: {time.time() - evaluator.start_time:>7.0f} | SavedDir: {cwd}")
+        agent.act.load_state_dict(best_state)  # act is also the critic (cri_class is None)
+        agent.selection = {"best_step": int(best_step), "best_val_return": float(best_val),
+                           "total_step": int(evaluator.total_step), "seed": int(args_seed),
+                           "val_curve": [[int(r[0]), float(r[1])] for r in evaluator.recorder]}
+        print(f"| best validation return {best_val:.2f} at step {best_step:.2e}")
 
         env.close() if hasattr(env, "close") else None
         evaluator.save_training_curve_jpg()
@@ -228,18 +271,19 @@ class Ensemble:
         return agent
 
 
-def run(save_path, agent_list, log_rules=False):
+def run(save_path, agent_list, log_rules=False, gpu_id=None, break_step=int(32e4), num_sims=2**12,
+        slippage=7e-7, seed=0, data_dir=None, stop_loss_rate=1e-3):
+    """[fix] the settings are arguments; defaults are the kit's, with break_step restored to 32e4 (its TODO)"""
     import sys
 
-    gpu_id = int(sys.argv[1]) if len(sys.argv) > 1 else -1  # Get GPU_ID from command line parameters
+    if gpu_id is None:
+        gpu_id = int(sys.argv[1]) if len(sys.argv) > 1 else -1  # Get GPU_ID from command line parameters
 
     from erl_agent import AgentD3QN
 
-    num_sims = 2**12
     num_ignore_step = 60
     max_position = 1
     step_gap = 2
-    slippage = 7e-7
 
     max_step = (4800 - num_ignore_step) // step_gap
 
@@ -247,17 +291,20 @@ def run(save_path, agent_list, log_rules=False):
         "env_name": "TradeSimulator-v0",
         "num_envs": num_sims,
         "max_step": max_step,
-        "state_dim": 2 + 8 + 2,  # (position, holding) + factor_dim + DeepSeek engineered signals
+        "state_dim": 2 + 8,  # [baseline] (position, holding) + factor_dim; price only
         "action_dim": 3,  # long, 0, short
         "if_discrete": True,
         "max_position": max_position,
         "slippage": slippage,
         "num_sims": num_sims,
         "step_gap": step_gap,
+        "data_dir": data_dir,
+        "split": "train",
+        "stop_loss_rate": stop_loss_rate,
     }
     args = Config(agent_class=AgentD3QN, env_class=TradeSimulator, env_args=env_args)
     args.gpu_id = gpu_id
-    args.random_seed = gpu_id
+    args.random_seed = seed  # [fix] was gpu_id (the same for every member); +member index in ensemble_train
     args.net_dims = (128, 128, 128)
 
     args.gamma = 0.995
@@ -266,7 +313,7 @@ def run(save_path, agent_list, log_rules=False):
     args.soft_update_tau = 2e-6
     args.learning_rate = 2e-6
     args.batch_size = 512
-    args.break_step = int(32)  # TODO reset to 32e4
+    args.break_step = int(break_step)  # [fix] the kit shipped int(32) with "TODO reset to 32e4"
     args.buffer_size = int(max_step * 32)
     args.repeat_times = 2
     args.horizon_len = int(max_step * 4)
@@ -275,7 +322,7 @@ def run(save_path, agent_list, log_rules=False):
     args.save_gap = 8
 
     args.eval_env_class = EvalTradeSimulator
-    args.eval_env_args = env_args.copy()
+    args.eval_env_args = dict(env_args, split="val")  # [fix] select on validation, not on the training rows
 
     ensemble_env = Ensemble(
         log_rules,
@@ -285,6 +332,7 @@ def run(save_path, agent_list, log_rules=False):
         args,
     )
     ensemble_env.ensemble_train()
+    return ensemble_env
 
 
 if __name__ == "__main__":

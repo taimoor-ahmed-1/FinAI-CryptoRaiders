@@ -5,7 +5,7 @@ import numpy as np
 import torch as th
 from torch.nn.utils import clip_grad_norm_
 from typing import Optional
-from seq_data import ConfigData, convert_btc_csv_to_btc_npy
+from data_config import ConfigData
 
 TEN = th.Tensor
 
@@ -15,9 +15,9 @@ class SeqData:
         input_ary_path = args.input_ary_path
         label_ary_path = args.label_ary_path
 
-        '''Load or generate data'''
+        '''Load data'''  # [fix] made by seq_data.convert_btc_csv_to_btc_npy (needs the csv path)
         if not os.path.exists(label_ary_path) or not os.path.exists(input_ary_path):
-            convert_btc_csv_to_btc_npy(args=args)
+            raise FileNotFoundError(f"run seq_data.py <csv> first: {input_ary_path}")
 
         input_seq = np.load(input_ary_path)
         input_seq = np.nan_to_num(input_seq, nan=0.0, neginf=0.0, posinf=0.0)
@@ -39,6 +39,7 @@ class SeqData:
         self.train_seq_len = seq_i1 - seq_i0
         self.valid_seq_len = seq_i2 - seq_i1
 
+        self.input_seq = input_seq  # [fix] all rows (train, val, test), for the causal prediction pass
         self.train_input_seq = input_seq[seq_i0:seq_i1]
         self.valid_input_seq = input_seq[seq_i1:seq_i2]
         self.train_label_seq = label_seq[seq_i0:seq_i1]
@@ -50,6 +51,15 @@ class SeqData:
 
         input_ary = self.train_input_seq[ids, :].permute(1, 0, 2).to(device)
         label_seq = self.train_label_seq[ids, :].permute(1, 0, 2).to(device)
+        return input_ary, label_seq
+
+    def sample_for_valid(self, batch_size: int = 32, seq_len: int = 4096, device: th.device = th.device('cpu')):
+        """[fix] the kit scored its 'validation' loss on sample_for_train, i.e. on the rows it trains on"""
+        i0s = np.random.randint(0, self.valid_seq_len - seq_len, size=batch_size)
+        ids = np.arange(seq_len)[None, :].repeat(batch_size, axis=0) + i0s[:, None]
+
+        input_ary = self.valid_input_seq[ids, :].permute(1, 0, 2).to(device)
+        label_seq = self.valid_label_seq[ids, :].permute(1, 0, 2).to(device)
         return input_ary, label_seq
 
 
@@ -78,11 +88,12 @@ def train_model(gpu_id: int):
     learning_rate = 1e-3  # Learning rate, controls the step size of parameter update at each iteration
     clip_grad_norm = 2  # Gradient clipping threshold, used to control the size of the gradient and prevent gradient explosion problems
 
-    out_dir = './output'
     if_report = True
 
     '''data'''
     args = ConfigData()
+    out_dir = f'{args.data_dir}/rnn_output'  # [fix] was ./output (lost with the Colab runtime)
+    os.makedirs(out_dir, exist_ok=True)
     seq_data = SeqData(args=args, train_ratio=0.6)
     input_dim = seq_data.input_dim
     label_dim = seq_data.label_dim
@@ -99,6 +110,7 @@ def train_model(gpu_id: int):
     # validator = Validator(out_dir=out_dir, if_report=if_report)
 
     seq_len = 2 ** 8
+    best_state = None
     train_times = int(seq_data.train_seq_len / seq_len / batch_size * epoch)
     print(f"| train_seq_len {seq_data.train_seq_len}  train_times {train_times}")
     for step_idx in range(train_times):
@@ -118,8 +130,8 @@ def train_model(gpu_id: int):
 
             '''update_obj_valid'''
             net.eval()
-            for _ in range(int(seq_data.valid_seq_len / seq_len / batch_size)):
-                inp, lab = seq_data.sample_for_train(batch_size=batch_size, seq_len=seq_len, device=device)
+            for _ in range(max(1, int(seq_data.valid_seq_len / seq_len / batch_size))):  # [fix] >= 1 batch
+                inp, lab = seq_data.sample_for_valid(batch_size=batch_size, seq_len=seq_len, device=device)  # [fix]
                 out, _ = net(inp)
 
                 seq_len = min(out.shape[0], lab.shape[0])
@@ -142,24 +154,13 @@ def train_model(gpu_id: int):
             if evaluator.patience == 0:
                 best_valid_loss = evaluator.best_valid_loss
                 th.save(net.state_dict(), f'{out_dir}/net_{step_idx:06}_{best_valid_loss:06.3f}.pth')
+                best_state = {k: v.detach().clone() for k, v in net.state_dict().items()}
                 # validator.validate_save(f'{out_dir}_result.csv')
 
+    net.load_state_dict(best_state)  # [fix] keep the best-validation network; the kit saved the last one
     predict_net_path = args.predict_net_path
     th.save(net.state_dict(), predict_net_path)
-    print(f'| save network in {predict_net_path}')
-
-    predict_ary = np.empty_like(seq_data.valid_label_seq)
-    hid: Optional[TEN] = None
-
-    print(f"| valid_seq_len {seq_data.valid_seq_len}  valid_times {seq_data.valid_seq_len // seq_len}")
-    for seq_i0 in range(0, seq_data.valid_seq_len, seq_len):
-        seq_i1 = seq_i0 + seq_len
-        inp = seq_data.valid_input_seq[seq_i0:seq_i1].to(device)
-        out, hid = net.forward(inp[:, None, :], hid)
-        predict_ary[seq_i0:seq_i1] = out.data.cpu().numpy().squeeze(1)
-    predict_ary_path = args.predict_ary_path
-    np.save(predict_ary_path, predict_ary)
-    print(f'| save predict in {predict_ary_path}')
+    print(f'| save network in {predict_net_path}  (best valid loss {evaluator.best_valid_loss:.4e})')
 
 
 def valid_model(gpu_id: int):
@@ -185,14 +186,19 @@ def valid_model(gpu_id: int):
     net = RnnRegNet(inp_dim=input_dim, mid_dim=mid_dim, out_dim=label_dim, num_layers=num_layers).to(device)
     net.load_state_dict(th.load(predict_net_path, map_location=lambda storage, loc: storage))
 
-    predict_ary = np.empty_like(seq_data.valid_label_seq)
+    net.eval()
+    # [fix] one causal pass over ALL rows (train, val, test): row t's factors use inputs up to row t only, and
+    # the hidden state carries across split boundaries. The kit predicted each file separately and its
+    # output was 900 rows shorter than the prices (the label horizon), which the simulator then mis-aligned.
+    input_seq = seq_data.input_seq
+    predict_ary = np.empty((input_seq.shape[0], label_dim), dtype=np.float32)
     hid: Optional[TEN] = None
 
     seq_len = 2 ** 9
-    print(f"| valid_seq_len {seq_data.valid_seq_len}  valid_times {seq_data.valid_seq_len // seq_len}")
-    for seq_i0 in range(0, seq_data.valid_seq_len, seq_len):
+    print(f"| predict_seq_len {input_seq.shape[0]}  predict_times {input_seq.shape[0] // seq_len}")
+    for seq_i0 in range(0, input_seq.shape[0], seq_len):
         seq_i1 = seq_i0 + seq_len
-        inp = seq_data.valid_input_seq[seq_i0:seq_i1].to(device)
+        inp = input_seq[seq_i0:seq_i1].to(device)
         out, hid = net.forward(inp[:, None, :], hid)
         predict_ary[seq_i0:seq_i1] = out.data.cpu().numpy().squeeze(1)
     np.save(predict_ary_path, predict_ary)
@@ -207,6 +213,6 @@ Out[3]: (1030728, 3)
 
 if __name__ == '__main__':
     GPU_ID = int(sys.argv[1]) if len(sys.argv) > 1 else -1  # Get GPU_ID from command line parameters
-    convert_btc_csv_to_btc_npy()  # Data preprocessing, using market information and code to generate weak factor Alpha101
+    # convert_btc_csv_to_btc_npy()  # [fix] run `python seq_data.py <csv>` first (it needs the csv path)
     train_model(gpu_id=GPU_ID)  # Using weak factor Alpha101 to train recurrent network RNN ​​(LSTM+GRU + Regression)
     valid_model(gpu_id=GPU_ID)  # Generate prediction results using the trained recurrent network and save them to the directory specified by ConfigData

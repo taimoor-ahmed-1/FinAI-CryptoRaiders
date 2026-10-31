@@ -8,17 +8,11 @@ from numpy import log
 from numpy import sign
 from scipy.stats import rankdata
 
+from data_config import ConfigData  # [fix] one config for all steps (the kit had two diverging copies)
 
-class ConfigData:
-    def __init__(self, data_dir: str = "./data"):
-        self.data_dir = data_dir
-
-        self.csv_path = f"{data_dir}/BTC_1sec_with_sentiment_risk_train.csv"
-        self.input_ary_path = f"{data_dir}/BTC_1sec_input.npy"
-        self.label_ary_path = f"{data_dir}/BTC_1sec_label.npy"
-
-        self.predict_ary_path = f"{data_dir}/BTC_1sec_predict.npy"
-        self.predict_net_path = f"{data_dir}/BTC_1sec_predict.pth"
+# [fix] the columns the factors and the simulator read; loading only these keeps the 157-column file small
+KIT_COLUMNS = ["midpoint", "spread", "buys", "sells", "bids_distance_3", "asks_distance_3",
+               "bids_notional_3", "asks_notional_3"]
 
 def convert_csv_to_level5_csv():
     args = ConfigData()
@@ -1227,16 +1221,20 @@ class TechIndicator:
         return (self.mid_price - self.best_bid) / (self.spread + 0.001)
 
 
-def normalize_with_quantiles(arys, q_low=0.01, q_high=0.99):
+def normalize_with_quantiles(arys, q_low=0.01, q_high=0.99, ref_arys=None):
     # 计算每列的 0.01 和 0.99 分位数
-    min_vals = np.quantile(arys, q_low, axis=0, keepdims=True)
-    max_vals = np.quantile(arys, q_high, axis=0, keepdims=True)
+    # [fix] quantiles from `ref_arys` (the train rows) when given: the kit normalised each file on itself,
+    # so the test factors were scaled with the test period's own (future) distribution
+    ref_arys = arys if ref_arys is None else ref_arys
+    min_vals = np.quantile(ref_arys, q_low, axis=0, keepdims=True)
+    max_vals = np.quantile(ref_arys, q_high, axis=0, keepdims=True)
 
     # 归一化到 ±1 之间
 
     arys = arys.clip(min_vals, max_vals)
-    arys = 2 * (arys - min_vals) / (max_vals - min_vals) - 1
-    return arys
+    span = max_vals - min_vals
+    arys = 2 * (arys - min_vals) / np.where(span > 0, span, 1) - 1
+    return np.where(span > 0, arys, 0.0)  # a constant column -> 0 (the kit got NaN, which it later set to 0)
 
 
 """label: predict the price in the future"""
@@ -1286,20 +1284,43 @@ def seq_to_label(ary, win_sizes=(10, 20, 40, 80, 160), if_print=False):
 """run"""
 
 
-def convert_btc_csv_to_btc_npy(args=ConfigData()):
-    csv_path = args.csv_path
+def convert_btc_csv_to_btc_npy(csv_path, args=None, train_frac=0.70, val_frac=0.15):
+    """[fix] The kit converted each file on its own. Here the whole contest file is converted once:
+    - splits are chronological row ranges (70 / 15 / 15), saved in splits.json;
+    - Alpha101 is computed over all rows. Every operator looks backwards (rolling windows, shifts), so this
+      equals a per-split computation without the warm-up gap at each split start;
+    - the factors are normalised with the TRAIN rows' quantiles (see normalize_with_quantiles);
+    - the RNN labels (which look up to 900 s ahead) come from the train rows only."""
+    import json
+    args = args or ConfigData()
+    os.makedirs(args.data_dir, exist_ok=True)
     input_ary_path = args.input_ary_path
     label_ary_path = args.label_ary_path
 
-    df = pd.read_csv(csv_path)
+    df = pd.read_csv(csv_path, usecols=KIT_COLUMNS)
+    n = len(df)
+    r1, r2 = int(n * train_frac), int(n * (train_frac + val_frac))
+    with open(args.splits_path, "w") as f:
+        json.dump({"train": [0, r1], "val": [r1, r2], "test": [r2, n]}, f)
+    print(f"| {n:,} rows; train [0, {r1:,})  val [{r1:,}, {r2:,})  test [{r2:,}, {n:,})")
+
+    if not os.path.exists(args.price_ary_path):
+        price_ary = df[["bids_distance_3", "asks_distance_3", "midpoint"]].values.astype(np.float64)
+        price_ary[:, 0] = price_ary[:, 2] * (1 + price_ary[:, 0])  # as in TradeSimulator: bid, ask, mid
+        price_ary[:, 1] = price_ary[:, 2] * (1 + price_ary[:, 1])
+        np.save(args.price_ary_path, price_ary)
 
     if not os.path.exists(label_ary_path):
-        price_ary = df["midpoint"].values
+        price_ary = df["midpoint"].values[:r1]
         label_ary = seq_to_label(ary=price_ary, win_sizes=(10, 20, 30, 60, 80, 100, 200, 400), if_print=False)
         np.save(label_ary_path, label_ary)
         print(f"| save in {label_ary_path}")
 
-    if not os.path.exists(input_ary_path):
+    if os.path.exists(input_ary_path):
+        return
+    if os.path.exists(args.alpha_raw_path):
+        alpha_arys = np.load(args.alpha_raw_path)
+    else:
         indicator = TechIndicator(df=df)
 
         alpha_arys = []
@@ -1317,14 +1338,16 @@ def convert_btc_csv_to_btc_npy(args=ConfigData()):
             )
 
             alpha_ary = np.nan_to_num(alpha_df.values, nan=0.0, neginf=0.0, posinf=0.0)
-            alpha_arys.append(alpha_ary)
-        alpha_arys = np.stack(alpha_arys, axis=1)
-        alpha_arys = normalize_with_quantiles(alpha_arys).astype(np.float16)
-        np.save(args.input_ary_path, alpha_arys)
-        print(f"| save in {input_ary_path}")
+            alpha_arys.append(alpha_ary.reshape(-1))
+        alpha_arys = np.stack(alpha_arys, axis=1).astype(np.float32)
+        np.save(args.alpha_raw_path, alpha_arys)  # [fix] cached: Alpha101 takes hours on a CPU
+    alpha_arys = normalize_with_quantiles(alpha_arys, ref_arys=alpha_arys[:r1]).astype(np.float16)
+    np.save(args.input_ary_path, alpha_arys)
+    print(f"| save in {input_ary_path}")
 
 
 if __name__ == "__main__":
     # convert_csv_to_level5_csv()
     # check_btc_1s_csv()
-    convert_btc_csv_to_btc_npy()
+    import sys
+    convert_btc_csv_to_btc_npy(sys.argv[1])
