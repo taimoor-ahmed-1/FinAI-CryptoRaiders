@@ -7,6 +7,11 @@ State (brief section 3.4 a):
     B  + sentiment_score   dim 11
     C  + risk_score        dim 11
     D  + both              dim 12   (the full model)
+    E  + interval signals  dim 19   (experiment 12: [q25, q75] centre / width of sentiment and risk over 6 h
+                                     and 24 h, news intensity - contest_intervals.py)
+    F  E + gate            dim 19   (no opening / adding while the 6 h sentiment interval is wide)
+    Gv / Gd  A + the 12 E13 features (paper_daily.py), VADER / DeepSeek sentiment   dim 22
+    Hv / Hd  G + gate      dim 22   (no opening / adding while yesterday's sentiment interval is wide)
 
 Actions (same as the notebook): 0 / 1 / 2 = decrease / keep / increase the position
 level by one step, levels in [-max_position, +max_position] (no shorts if
@@ -47,12 +52,24 @@ import torch as th
 
 from .rewards import make_reward
 
+# experiment 12 (contest_intervals.py): interval-valued news signals at two time scales + news intensity
+INTERVAL_COLS = ("sent_centre_6h", "sent_width_6h", "risk_centre_6h", "risk_width_6h",
+                 "sent_centre_24h", "sent_width_24h", "risk_centre_24h", "risk_width_24h", "news_intensity")
 STATE_CONFIGS = {
     "A": (),
     "B": ("sentiment_score",),
     "C": ("risk_score",),
     "D": ("sentiment_score", "risk_score"),
+    "E": INTERVAL_COLS,
+    "F": INTERVAL_COLS,                 # E + the interval-constrained trading gate (STATE_GATES)
 }
+# experiment 13 (paper_daily.py): the paper's daily interval-decomposition features, one set per sentiment scorer
+E13_FEATURES = ("btc_trend_gap", "btc_cycle", "btc_noise", "btc_noise_width", "gold_trend", "wti_trend",
+                "dxy_trend", "sp500_trend", "gt_cycle", "gt_cycle_width", "sent_noise", "sent_noise_width")
+for _tag, _scorer in (("v", "vader"), ("d", "deepseek")):
+    STATE_CONFIGS["G" + _tag] = tuple(f"e13_{_scorer}__{c}" for c in E13_FEATURES)
+    STATE_CONFIGS["H" + _tag] = STATE_CONFIGS["G" + _tag]
+STATE_GATES = {"F": "gate_open", "Hv": "gate_open_vader", "Hd": "gate_open_deepseek"}
 # fixed scaling for each signal column -> roughly [0, 1]
 SIGNAL_SCALE = {
     "sentiment_score": (1.0, 5.0),
@@ -80,6 +97,7 @@ class EnvConfig:
     slippage: float = 0.0002            # per side
     stop_loss: float = 0.0              # relative trailing stop, 0 = off
     max_holding_bars: int = 0           # force exit after this many bars, 0 = off
+    gate: str = None                    # 0/1 market column; while 0 the position can only shrink (None = the state's)
     holding_norm_bars: int = 1440       # "time in position" feature = bars / this, capped at 1
     reward: str = "net_asset_change"
     reward_scale: float = None          # None = the reward's own default
@@ -88,6 +106,10 @@ class EnvConfig:
     @property
     def signal_cols(self):
         return tuple(self.signals) if self.signals is not None else STATE_CONFIGS[self.state]
+
+    @property
+    def gate_col(self):
+        return self.gate if self.gate is not None else STATE_GATES.get(self.state)
 
     @property
     def cost_rate(self):
@@ -136,6 +158,11 @@ class Market:
         self.n = len(price)
         self.price = th.tensor(price, device=device)
         self.feat = th.tensor(np.nan_to_num(feat), dtype=th.float32, device=device)
+        self.gate = None
+        if cfg.gate_col is not None:
+            if cfg.gate_col not in m.files:
+                raise KeyError(f"{cfg.gate_col!r} not in market_{split}.npz - build it with contest_intervals")
+            self.gate = th.tensor(m[cfg.gate_col] > 0.5, device=device)
         self.time_ns = m["time_ns"]
         self.device = device
 
@@ -221,6 +248,11 @@ class TradingEnv:
 
         level_prev = self.level
         new_level = (level_prev + a).clamp(self.lo_level, c.max_position)
+        if self.m.gate is not None:
+            # interval-constrained trading (experiment 12): while the gate is shut at the observed bar,
+            # a position may be reduced or closed but not opened or enlarged
+            grow = new_level.abs() > level_prev.abs()
+            new_level = th.where(grow & ~self.m.gate[self.idx], level_prev, new_level)
 
         in_pos = level_prev != 0
         if c.stop_loss > 0:

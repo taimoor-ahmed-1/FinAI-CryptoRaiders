@@ -136,17 +136,17 @@ LOW_COST = {"fee_rate": 0.0001, "slippage": 0.0001}      # 0.02 % per trade
 GROUPS = ("A", "B", "C", "D", "A_lowcost", "D_lowcost", "baselines")
 
 
-def group_specs(group, agent_hp, env_over, seeds=SEEDS):
+def group_specs(group, agent_hp, env_over, seeds=SEEDS, experiment=EXPERIMENT):
     """RunSpecs of one group: '<state>' or '<state>_lowcost' (DDQN x seeds), or 'baselines'."""
     from .env import EnvConfig
     from .runner import RunSpec
     if group == "baselines":
-        return [RunSpec(EXPERIMENT, b, seed=0, tag=tag, env=EnvConfig(state="D", **ENV, **costs))
+        return [RunSpec(experiment, b, seed=0, tag=tag, env=EnvConfig(state="D", **ENV, **costs))
                 for tag, costs in (("", {}), ("lowcost", LOW_COST)) for b in ("buy_and_hold", "cash")]
     state, _, low = group.partition("_")
     costs, tag = (LOW_COST, "lowcost") if low else ({}, "")
     env = EnvConfig(state=state, **ENV, **env_over, **costs)
-    return [RunSpec(EXPERIMENT, AGENT, seed=s, env=env, agent_hp=agent_hp, tag=tag, total_steps=TOTAL_STEPS,
+    return [RunSpec(experiment, AGENT, seed=s, env=env, agent_hp=agent_hp, tag=tag, total_steps=TOTAL_STEPS,
                     eval_every=EVAL_EVERY, val_chunks=1) for s in seeds]
 
 

@@ -109,7 +109,7 @@ _MARKETS = {}
 
 
 def _market(prepared_dir, factor_dir, split, cfg, device):
-    key = (str(prepared_dir), str(factor_dir), split, cfg.signal_cols, cfg.signal_source, str(device))
+    key = (str(prepared_dir), str(factor_dir), split, cfg.signal_cols, cfg.signal_source, cfg.gate_col, str(device))
     if key not in _MARKETS:
         _MARKETS[key] = Market(prepared_dir, factor_dir, split, cfg, device)
     return _MARKETS[key]
