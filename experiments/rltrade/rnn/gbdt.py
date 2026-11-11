@@ -101,28 +101,31 @@ def train_gbdt(cfg, prepared_dir, out_dir, verbose=True, save_factors=True):
     if verbose:
         print(f"[gbdt] {feats.shape[1]} features ({len(names)} inputs x {1 + len(cfg.ema_spans)}) | "
               f"train rows {len(tr_rows):,} | val rows {len(va_rows):,} | {time.time() - t0:.0f}s to build")
-    params = dict(objective="regression", learning_rate=cfg.learning_rate, num_leaves=cfg.num_leaves,
-                  min_child_samples=cfg.min_child_samples, colsample_bytree=cfg.feature_fraction,
-                  subsample=cfg.bagging_fraction, subsample_freq=cfg.bagging_freq, reg_lambda=cfg.lambda_l2,
-                  n_estimators=cfg.n_estimators, random_state=cfg.seed, n_jobs=cfg.num_threads or -1,
-                  device_type=cfg.device, verbose=-1, **cfg.params)
+    # LightGBM's own API (no scikit-learn needed)
+    params = dict(objective="regression", metric="l2", learning_rate=cfg.learning_rate, num_leaves=cfg.num_leaves,
+                  min_data_in_leaf=cfg.min_child_samples, feature_fraction=cfg.feature_fraction,
+                  bagging_fraction=cfg.bagging_fraction, bagging_freq=cfg.bagging_freq, lambda_l2=cfg.lambda_l2,
+                  seed=cfg.seed, num_threads=cfg.num_threads, device_type=cfg.device, verbosity=-1, **cfg.params)
     n_out = y["train"].shape[1]
     pred = np.empty((len(feats), n_out), dtype=np.float32)
     gain = np.zeros(len(fnames))
     horizons = []
     for k in range(n_out):
         t1 = time.time()
-        m = lgb.LGBMRegressor(**params)
-        m.fit(X_tr, y["train"][tr_rows, k], eval_set=[(X_va, y["val"][va_rows, k])], eval_metric="l2",
-              callbacks=[lgb.early_stopping(cfg.early_stopping, verbose=False)])
-        pred[:, k] = np.clip(m.predict(feats, num_iteration=m.best_iteration_), -1.0, 1.0)
-        g = m.booster_.feature_importance(importance_type="gain")
+        dtr = lgb.Dataset(X_tr, label=y["train"][tr_rows, k], free_raw_data=False)
+        dva = lgb.Dataset(X_va, label=y["val"][va_rows, k], reference=dtr, free_raw_data=False)
+        ev = {}
+        b = lgb.train(params, dtr, num_boost_round=cfg.n_estimators, valid_sets=[dva], valid_names=["val"],
+                      callbacks=[lgb.early_stopping(cfg.early_stopping, verbose=False), lgb.record_evaluation(ev)])
+        best = int(b.best_iteration) or b.current_iteration()
+        pred[:, k] = np.clip(b.predict(feats, num_iteration=best), -1.0, 1.0)
+        g = b.feature_importance(importance_type="gain", iteration=best)
         gain += g / max(g.sum(), 1e-12)
-        m.booster_.save_model(str(out / f"model_h{k}.txt"), num_iteration=m.best_iteration_)
-        horizons.append({"horizon": k, "best_iteration": int(m.best_iteration_),
-                         "val_l2": float(m.best_score_["valid_0"]["l2"]), "seconds": round(time.time() - t1, 1)})
+        b.save_model(str(out / f"model_h{k}.txt"), num_iteration=best)
+        horizons.append({"horizon": k, "best_iteration": best, "val_l2": float(ev["val"]["l2"][best - 1]),
+                         "seconds": round(time.time() - t1, 1)})
         if verbose:
-            print(f"  horizon {k}: {m.best_iteration_} trees | val l2 {horizons[-1]['val_l2']:.5f} | "
+            print(f"  horizon {k}: {best} trees | val l2 {horizons[-1]['val_l2']:.5f} | "
                   f"{horizons[-1]['seconds']:.0f}s")
     metrics = {"arch": "gbdt", "features": len(fnames), "horizons": horizons,
                "minutes": round((time.time() - t0) / 60, 2), "seed": cfg.seed}
