@@ -41,6 +41,13 @@ from .. import seeding
 from . import build_rnn
 
 SPLITS = ("train", "val", "test")
+EXTRA_SPLITS = ("stress_bear",)    # optional held-out splits after test (initiation split): predicted, never used
+
+
+def available_splits(prepared_dir):
+    """train / val / test plus any EXTRA_SPLITS present in `prepared_dir`, in chronological order."""
+    d = Path(prepared_dir)
+    return SPLITS + tuple(s for s in EXTRA_SPLITS if (d / f"alpha101_{s}.npy").exists())
 
 
 @dataclass
@@ -73,13 +80,14 @@ class SeqData:
 
     def __init__(self, prepared_dir, device):
         d = Path(prepared_dir)
+        self.splits = available_splits(d)
         xs = [np.nan_to_num(np.load(d / f"alpha101_{s}.npy").astype(np.float32),
-                            nan=0.0, posinf=0.0, neginf=0.0) for s in SPLITS]
-        self.length = {s: len(x) for s, x in zip(SPLITS, xs)}
-        self.offset = dict(zip(SPLITS, np.cumsum([0] + [len(x) for x in xs[:-1]]).tolist()))
+                            nan=0.0, posinf=0.0, neginf=0.0) for s in self.splits]
+        self.length = {s: len(x) for s, x in zip(self.splits, xs)}
+        self.offset = dict(zip(self.splits, np.cumsum([0] + [len(x) for x in xs[:-1]]).tolist()))
         self.x_all = th.from_numpy(np.concatenate(xs)).to(device)
         self.y = {s: th.from_numpy(np.load(d / f"labels_{s}.npy").astype(np.float32)).to(device)
-                  for s in SPLITS}
+                  for s in self.splits}
         self.inp_dim = self.x_all.shape[1]
         self.out_dim = self.y["train"].shape[1]
         self.device = device
@@ -265,7 +273,7 @@ def train_rnn(cfg, prepared_dir, out_dir, trial=None, verbose=True, save_factors
     factors = predict_series(net, data.x_all, cfg.seq_len, cfg.wup_dim, amp=amp)
     metrics = {"arch": cfg.arch, "params": n_params, "steps_run": step + 1, "stop_reason": stop_reason,
                "best_val_loss_windows": best, "minutes": round((time.time() - t0) / 60, 2)}
-    for s in SPLITS:
+    for s in data.splits:
         f = factors[data.offset[s]: data.offset[s] + data.length[s]]
         if save_factors:
             np.save(out / f"factors_{s}.npy", f)
@@ -278,7 +286,7 @@ def train_rnn(cfg, prepared_dir, out_dir, trial=None, verbose=True, save_factors
     if verbose:
         print(f"[rnn] done ({stop_reason}, {metrics['minutes']} min) | "
               + " | ".join(f"{s}: mse {metrics[s]['mse']:.4f} ic {metrics[s]['ic_mean']:+.3f} "
-                           f"acc {metrics[s]['dir_acc_mean']:.3f}" for s in SPLITS))
+                           f"acc {metrics[s]['dir_acc_mean']:.3f}" for s in data.splits))
     return metrics
 
 
@@ -298,7 +306,7 @@ def export_factors(model_dir, prepared_dir, out_dir, device="auto", verbose=True
     net.load_state_dict(th.load(model_dir / "best_model.pt", map_location=device))
     factors = predict_series(net, data.x_all, cfg.seq_len, cfg.wup_dim, amp=False)
     metrics = {"source_model": str(model_dir), "arch": cfg.arch, "seed": cfg.seed}
-    for s in SPLITS:
+    for s in data.splits:
         f = factors[data.offset[s]: data.offset[s] + data.length[s]]
         np.save(out / f"factors_{s}.npy", f)
         metrics[s] = label_metrics(f, data.y[s].cpu().numpy())
@@ -306,7 +314,7 @@ def export_factors(model_dir, prepared_dir, out_dir, device="auto", verbose=True
     (out / "metrics.json").write_text(json.dumps(metrics, indent=2))
     if verbose:
         print(f"[rnn] {cfg.arch} s{cfg.seed} applied to {prepared_dir} | "
-              + " | ".join(f"{s}: mse {metrics[s]['mse']:.4f} ic {metrics[s]['ic_mean']:+.3f}" for s in SPLITS))
+              + " | ".join(f"{s}: mse {metrics[s]['mse']:.4f} ic {metrics[s]['ic_mean']:+.3f}" for s in data.splits))
     return metrics
 
 
