@@ -144,7 +144,7 @@ def train_gbdt(cfg, prepared_dir, out_dir, verbose=True, save_factors=True):
     if verbose:
         print(f"[gbdt] done ({metrics['minutes']} min) | "
               + " | ".join(f"{s}: mse {metrics[s]['mse']:.4f} ic {metrics[s]['ic_mean']:+.3f} "
-                           f"acc {metrics[s]['dir_acc_mean']:.3f}" for s in splits))
+                           f"acc {metrics[s]['dir_acc_mean']:.3f}" for s in ("train", "val")))   # held-out splits: saved, not shown
     return metrics
 
 
