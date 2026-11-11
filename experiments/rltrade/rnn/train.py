@@ -286,7 +286,7 @@ def train_rnn(cfg, prepared_dir, out_dir, trial=None, verbose=True, save_factors
     if verbose:
         print(f"[rnn] done ({stop_reason}, {metrics['minutes']} min) | "
               + " | ".join(f"{s}: mse {metrics[s]['mse']:.4f} ic {metrics[s]['ic_mean']:+.3f} "
-                           f"acc {metrics[s]['dir_acc_mean']:.3f}" for s in data.splits))
+                           f"acc {metrics[s]['dir_acc_mean']:.3f}" for s in ("train", "val")))   # held-out: saved, not shown
     return metrics
 
 

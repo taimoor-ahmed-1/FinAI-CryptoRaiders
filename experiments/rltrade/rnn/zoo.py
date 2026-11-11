@@ -20,27 +20,36 @@ import torch.nn as nn
 
 
 class _RecurrentNet(nn.Module):
-    def __init__(self, cell, inp_dim, mid_dim, out_dim, num_layers=2, dropout=0.1):
+    """skip=True adds a linear path from the current bar's inputs to the outputs (before the tanh), alongside
+    the recurrent path (experiment 14/15). With skip=False the module and its weights are exactly as before."""
+
+    def __init__(self, cell, inp_dim, mid_dim, out_dim, num_layers=2, dropout=0.1, skip=False):
         super().__init__()
         self.inp = nn.Sequential(nn.Linear(inp_dim, mid_dim), nn.LayerNorm(mid_dim), nn.GELU())
         self.rnn = cell(mid_dim, mid_dim, num_layers=num_layers, batch_first=True,
                         dropout=dropout if num_layers > 1 else 0.0)
         self.out = nn.Sequential(nn.Dropout(dropout), nn.Linear(mid_dim, mid_dim), nn.GELU(),
                                  nn.Linear(mid_dim, out_dim), nn.Tanh())
+        self.skip = nn.Linear(inp_dim, out_dim) if skip else None
+        if skip:                      # start as a pure GRU: the shortcut grows only if it helps
+            nn.init.zeros_(self.skip.weight)
+            nn.init.zeros_(self.skip.bias)
 
     def forward(self, x, hid=None):
         h, hid = self.rnn(self.inp(x), hid)
-        return self.out(h), hid
+        if self.skip is None:
+            return self.out(h), hid
+        return th.tanh(self.out[:-1](h) + self.skip(x)), hid
 
 
 class LSTMNet(_RecurrentNet):
-    def __init__(self, inp_dim, mid_dim, out_dim, num_layers=2, dropout=0.1):
-        super().__init__(nn.LSTM, inp_dim, mid_dim, out_dim, num_layers, dropout)
+    def __init__(self, inp_dim, mid_dim, out_dim, num_layers=2, dropout=0.1, skip=False):
+        super().__init__(nn.LSTM, inp_dim, mid_dim, out_dim, num_layers, dropout, skip)
 
 
 class GRUNet(_RecurrentNet):
-    def __init__(self, inp_dim, mid_dim, out_dim, num_layers=2, dropout=0.1):
-        super().__init__(nn.GRU, inp_dim, mid_dim, out_dim, num_layers, dropout)
+    def __init__(self, inp_dim, mid_dim, out_dim, num_layers=2, dropout=0.1, skip=False):
+        super().__init__(nn.GRU, inp_dim, mid_dim, out_dim, num_layers, dropout, skip)
 
 
 class _PositionalEncoding(nn.Module):
