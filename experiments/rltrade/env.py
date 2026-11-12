@@ -310,7 +310,7 @@ def run_policy(policy, market, cfg, chunks=1, seed=0):
 
     Returns a dict of NumPy arrays, one entry per decision step, chunks stitched in
     time order: returns (net step return), level, traded (fraction of equity),
-    cost (fraction of equity), time_ns; plus equity (with a leading 1.0).
+    cost (fraction of equity), time_ns, bar (the bar index of each decision); plus equity (with a leading 1.0).
     """
     env = TradingEnv(market, cfg, num_envs=chunks, mode="eval", seed=seed)
     obs = env.reset()
@@ -326,6 +326,6 @@ def run_policy(policy, market, cfg, chunks=1, seed=0):
     flat = lambda a: a.T.reshape(-1)                                       # noqa: E731  chunk-major = time order
     out = {"returns": flat(ret), "level": flat(rec["level"]).astype(np.int8),
            "traded": flat(rec["traded"] / rec["eq_prev"]), "cost": flat(rec["cost"] / rec["eq_prev"]),
-           "time_ns": market.time_ns[flat(bar)]}
+           "time_ns": market.time_ns[flat(bar)], "bar": flat(bar)}
     out["equity"] = np.concatenate([[1.0], np.cumprod(1.0 + out["returns"])])
     return out

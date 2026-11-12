@@ -306,12 +306,12 @@ def _tuples(d):
     return {k: tuple(v) if isinstance(v, list) else v for k, v in d.items()}
 
 
-def backtest_saved(run_dir, splits, prepared_dir=None, factor_dir=None, device="auto", use_fallback=True):
-    """Backtest a finished run on `splits` from its saved files, with no training and no selection.
+def load_saved(run_dir, device="auto", use_fallback=True):
+    """Rebuild a finished run's policy from config.json + model.pt (a baseline needs neither).
 
-    Rebuilds the policy from config.json + model.pt (a baseline needs neither) and applies the
-    run's stay-flat decision (row["fallback_used"]) unless use_fallback=False. prepared_dir /
-    factor_dir default to the paths stored in config.json. Returns ({split: metrics}, {split: backtest}).
+    Applies the run's stay-flat decision (row["fallback_used"]) unless use_fallback=False.
+    Returns (policy, agent or None, EnvConfig, config dict, device); `agent` is None when the
+    policy is a baseline or the fallback.
     """
     run_dir = Path(run_dir)
     conf = json.loads((run_dir / "config.json").read_text())
@@ -322,8 +322,7 @@ def backtest_saved(run_dir, splits, prepared_dir=None, factor_dir=None, device="
         env_d["signals"] = tuple(env_d["signals"])
     cfg = EnvConfig(**env_d)
     dev = seeding.pick_device(device)
-    prepared_dir = prepared_dir or conf["prepared_dir"]
-    factor_dir = factor_dir or conf["factor_dir"]
+    agent = None
     if spec["agent"] in BASELINES:
         policy = make_baseline(spec["agent"], spec["seed"])
     elif use_fallback and row.get("fallback_used") is True:
@@ -332,6 +331,19 @@ def backtest_saved(run_dir, splits, prepared_dir=None, factor_dir=None, device="
         agent = make_agent(spec["agent"], cfg.state_dim, 3, dev, spec["seed"], **_tuples(conf["agent_config"]))
         agent.load_state_dict(th.load(run_dir / "model.pt", map_location=dev))
         policy = lambda o: agent.act(o, deterministic=True)   # noqa: E731
+    return policy, agent, cfg, conf, dev
+
+
+def backtest_saved(run_dir, splits, prepared_dir=None, factor_dir=None, device="auto", use_fallback=True):
+    """Backtest a finished run on `splits` from its saved files, with no training and no selection.
+
+    Rebuilds the policy with load_saved (including the run's stay-flat decision unless
+    use_fallback=False). prepared_dir / factor_dir default to the paths stored in config.json.
+    Returns ({split: metrics}, {split: backtest}).
+    """
+    policy, _, cfg, conf, dev = load_saved(run_dir, device, use_fallback)
+    prepared_dir = prepared_dir or conf["prepared_dir"]
+    factor_dir = factor_dir or conf["factor_dir"]
     bts, mets = {}, {}
     for s in splits:
         bts[s] = run_policy(policy, Market(prepared_dir, factor_dir, s, cfg, dev), cfg, chunks=1)
