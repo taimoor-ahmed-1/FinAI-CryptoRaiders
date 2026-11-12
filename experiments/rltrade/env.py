@@ -173,6 +173,8 @@ class TradingEnv:
     mode="train": each copy starts at a random bar and restarts after `episode_bars`.
     mode="eval":  the split is cut into `num_envs` consecutive chunks, copy k trades
                   chunk k once from its first bar (num_envs=1 = one exact pass).
+    mode="parallel": every copy trades the WHOLE split once from its first bar - an exact
+                  pass per copy, for scoring `num_envs` different policies side by side.
     """
 
     def __init__(self, market, cfg, num_envs=1, mode="train", seed=0):
@@ -189,6 +191,11 @@ class TradingEnv:
             self.hi_start = market.n - 1 - lag - self.ep_steps * g
             if self.hi_start <= self.lo_start:
                 raise ValueError(f"{market.split} split too short for episode_bars={cfg.episode_bars}")
+        elif mode == "parallel":
+            self.ep_steps = (market.n - 1 - lag) // g
+            if self.ep_steps < 1:
+                raise ValueError("evaluation split too short")
+            self.chunk_start = th.zeros(num_envs, dtype=th.long, device=self.dev)
         else:
             total = (market.n - 1 - lag) // g
             self.ep_steps = total // num_envs
