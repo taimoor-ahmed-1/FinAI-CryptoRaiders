@@ -17,7 +17,7 @@ def test_never_trading_trial_cannot_win():
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     calls = []
 
-    def fake_run(spec, prepared_dir, factor_dir, out_root, device="auto", trial=None, save=True, verbose=True):
+    def fake_run(spec, prepared_dir, factor_dir, out_root, device="auto", trial=None, save=True, verbose=True, **kw):
         calls.append(spec.min_val_trades)
         flat = len(calls) % 2 == 1                       # odd trials: a do-nothing policy (Sharpe 0)
         return {"val_sharpe": 0.0 if flat else -0.8, "val_cum_return_pct": 0.0 if flat else -3.0,

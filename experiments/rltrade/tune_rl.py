@@ -55,7 +55,9 @@ def params_to_hp(agent, params):
 
 
 def tune_agent(agent, prepared_dir, factor_dir, out_root, env_cfg=None, n_trials=20,
-               total_steps=500_000, eval_every=100_000, device="auto", sampler_seed=0, min_val_trades=5):
+               total_steps=500_000, eval_every=100_000, device="auto", sampler_seed=0, min_val_trades=5,
+               eval_splits=("val", "test")):
+    """eval_splits=("val",) keeps the test split unloaded and unscored during the search (experiment 16)."""
     import optuna
     env_cfg = env_cfg or EnvConfig(state="D")
     out = Path(out_root) / "tuning"
@@ -74,7 +76,8 @@ def tune_agent(agent, prepared_dir, factor_dir, out_root, env_cfg=None, n_trials
         spec = RunSpec("tuning", agent, seed=1000 + trial.number,
                        env=dataclasses.replace(env_cfg, **env_over), agent_hp=hp,
                        total_steps=total_steps, eval_every=eval_every, min_val_trades=min_val_trades)
-        row = run(spec, prepared_dir, factor_dir, out_root, device=device, trial=trial, save=False, verbose=False)
+        row = run(spec, prepared_dir, factor_dir, out_root, device=device, trial=trial, save=False, verbose=False,
+                  eval_splits=eval_splits)
         for k in ("val_sharpe", "val_cum_return_pct", "val_max_drawdown_pct", "val_num_trades", "selection_eligible"):
             trial.set_user_attr(k, row[k])
         eligible = bool(row["selection_eligible"])

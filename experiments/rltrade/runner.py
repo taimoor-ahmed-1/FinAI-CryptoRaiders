@@ -15,6 +15,15 @@ NOT eligible. With transaction costs and a falling validation market, "stay in c
 actually trades, so selection would reward a do-nothing or one-off directional bet
 rather than trading. Staying in cash is reported as its own baseline ("cash").
 
+Stay-flat fallback (RunSpec.fallback = "cash", experiment 16): if no checkpoint is eligible, or the
+best eligible one does not beat cash on validation (its validation score <= `fallback_min_score`,
+default 0 = cash's Sharpe), the run trades as cash instead of with the least-bad checkpoint. The
+checkpoint is still saved, and its own validation numbers are kept as ckpt_val_* in the results row.
+
+`eval_splits` (default val and test) are the splits backtested at the end. Experiment 16 passes
+("val",) so that test is neither loaded nor scored until the single final evaluation, which
+`backtest_saved` runs from the saved files.
+
 Every run has a stable id, e.g. `05_ablation/ppo_D_net_asset_change_s3`, which is
 both its folder under `<out>/models/` and its `run_id` in results.csv, so any number
 in the report traces back to one checkpoint. Runs whose metrics.json already exists
@@ -95,6 +104,8 @@ class RunSpec:
     select_metric: str = "sharpe"
     min_val_trades: int = 5              # checkpoints that trade less on validation are ineligible
     tag: str = ""                        # optional extra label in the run id
+    fallback: str = ""                   # "cash": stay flat when no eligible checkpoint beats cash on validation
+    fallback_min_score: float = 0.0      # the selected checkpoint must score above this to be used
 
     @property
     def run_id(self):
@@ -148,9 +159,20 @@ def append_result(csv_path, row):
             w.writerow(row)
 
 
+FALLBACKS = ("", "cash")
+CKPT_KEYS = ("sharpe", "cum_return_pct", "max_drawdown_pct", "num_trades")
+
+
+def fallback_applies(spec, eligible, score):
+    """True when the stay-flat fallback replaces the selected checkpoint."""
+    if spec.fallback not in FALLBACKS:
+        raise ValueError(f"unknown fallback {spec.fallback!r}; choose from {FALLBACKS}")
+    return bool(spec.fallback) and (not eligible or score <= spec.fallback_min_score)
+
+
 def run(spec, prepared_dir, factor_dir, out_root, device="auto", overwrite=False,
-        trial=None, save=True, verbose=True):
-    """Train (if needed), select on validation, test once. Returns the results row.
+        trial=None, save=True, verbose=True, eval_splits=("val", "test")):
+    """Train (if needed), select on validation, backtest `eval_splits` once. Returns the results row.
 
     trial: optional Optuna trial - the validation score is reported at every check
            and the run is pruned when Optuna says so (used for hyperparameter search).
@@ -164,15 +186,21 @@ def run(spec, prepared_dir, factor_dir, out_root, device="auto", overwrite=False
             print(f"[skip] {spec.run_id} (already done)")
         return row
 
+    eval_splits = tuple(eval_splits)
+    if "val" not in eval_splits:
+        raise ValueError("eval_splits must include 'val' (checkpoints are selected on it)")
+    fallback_applies(spec, True, 0.0)                         # validates spec.fallback before training
     t0 = time.time()
     dev = seeding.pick_device(device)
     seeding.set_seed(spec.seed)
     cfg = spec.env
-    mk = {s: _market(prepared_dir, factor_dir, s, cfg, dev) for s in ("train", "val", "test")}
+    needed = ("val",) + eval_splits if spec.agent in BASELINES else ("train", "val") + eval_splits
+    mk = {s: _market(prepared_dir, factor_dir, s, cfg, dev) for s in dict.fromkeys(needed)}
     ppy = cfg.periods_per_year
     val_curve = []
     sel = CheckpointSelector(spec.select_metric, spec.min_val_trades)
 
+    fallback_used, ckpt = False, None
     if spec.agent in BASELINES:
         policy = make_baseline(spec.agent, spec.seed)
         agent_cfg = {}
@@ -215,9 +243,19 @@ def run(spec, prepared_dir, factor_dir, out_root, device="auto", overwrite=False
             callback(agent, spec.total_steps)                  # always score the final policy too
         agent.load_state_dict(sel.state)
         policy = lambda o: agent.act(o, deterministic=True)   # noqa: E731
+        fallback_used = fallback_applies(spec, sel.eligible, sel.score)
+        if fallback_used:
+            ckpt = compute_metrics(run_policy(policy, mk["val"], cfg, chunks=1), ppy)
+            policy = make_baseline(spec.fallback, spec.seed)
+            if verbose:
+                print(f"  {spec.run_id} | fallback: best checkpoint val {spec.select_metric} "
+                      f"{ckpt[spec.select_metric]:+.2f}, trades {ckpt['num_trades']}"
+                      + ("" if sel.eligible else " (not eligible)") + f" -> trades as {spec.fallback}")
 
-    bts = {s: run_policy(policy, mk[s], cfg, chunks=1) for s in ("val", "test")}
+    bts = {s: run_policy(policy, mk[s], cfg, chunks=1) for s in eval_splits}
     mets = {s: compute_metrics(bts[s], ppy) for s in bts}
+    if spec.agent not in BASELINES and ckpt is None:
+        ckpt = mets["val"]
     info = seeding.run_info(spec.seed)
     row = {"run_id": spec.run_id, "experiment": spec.experiment, "agent": spec.agent,
            "state": cfg.state if cfg.signals is None else "+".join(cfg.signals),
@@ -227,15 +265,18 @@ def run(spec, prepared_dir, factor_dir, out_root, device="auto", overwrite=False
            "select_min_trades": spec.min_val_trades if spec.agent not in BASELINES else "",
            "selection_eligible": sel.eligible if spec.agent not in BASELINES else "",
            "selection_rule": SELECTION_RULE,
-           **{f"val_{k}": mets["val"][k] for k in METRIC_KEYS},
-           **{f"test_{k}": mets["test"][k] for k in METRIC_KEYS},
+           "fallback": spec.fallback, "fallback_used": fallback_used if spec.agent not in BASELINES else "",
+           **{f"ckpt_val_{k}": (ckpt[k] if ckpt is not None else "") for k in CKPT_KEYS},
+           **{f"{s}_{k}": mets[s][k] for s in eval_splits for k in METRIC_KEYS},
            "fee_rate": cfg.fee_rate, "slippage": cfg.slippage, "step_gap": cfg.step_gap,
            "minutes": round((time.time() - t0) / 60, 2), "commit": info["commit"], "device": info["device"],
            "agent_hp": json.dumps(_jsonable(agent_cfg), sort_keys=True)}
     if verbose:
-        print(f"[done] {spec.run_id} | test sharpe {mets['test']['sharpe']:+.2f} "
-              f"ret {mets['test']['cum_return_pct']:+.2f}% mdd {mets['test']['max_drawdown_pct']:.1f}% "
-              f"trades {mets['test']['num_trades']} | {row['minutes']} min")
+        shown = " | ".join(f"{s} sharpe {mets[s]['sharpe']:+.2f} ret {mets[s]['cum_return_pct']:+.2f}% "
+                           f"mdd {mets[s]['max_drawdown_pct']:.1f}% trades {mets[s]['num_trades']}"
+                           for s in eval_splits if s != "val" or len(eval_splits) == 1)
+        print(f"[done] {spec.run_id} | {shown}" + (" (stay-flat fallback)" if fallback_used else "")
+              + f" | {row['minutes']} min")
     if save:
         out.mkdir(parents=True, exist_ok=True)
         if spec.agent not in BASELINES:
@@ -246,10 +287,12 @@ def run(spec, prepared_dir, factor_dir, out_root, device="auto", overwrite=False
         (out / "config.json").write_text(json.dumps(_jsonable({"spec": spec_d, "agent_config": agent_cfg,
                                                                "prepared_dir": str(prepared_dir),
                                                                "factor_dir": str(factor_dir)}), indent=2))
-        np.savez_compressed(out / "test_backtest.npz", **{k: bts["test"][k] for k in
-                                                          ("equity", "level", "time_ns", "returns")})
-        (out / "metrics.json").write_text(json.dumps(_jsonable({"row": row, "val": mets["val"],
-                                                                "test": mets["test"], "run": info}), indent=2))
+        for s in eval_splits:
+            if s != "val" or len(eval_splits) == 1:
+                np.savez_compressed(out / f"{s}_backtest.npz", **{k: bts[s][k] for k in
+                                                                  ("equity", "level", "time_ns", "returns")})
+        (out / "metrics.json").write_text(json.dumps(_jsonable({"row": row, **mets, "ckpt_val": ckpt,
+                                                                "run": info}), indent=2))
         append_result(out_root / "results.csv", row)
     return row
 
@@ -257,3 +300,40 @@ def run(spec, prepared_dir, factor_dir, out_root, device="auto", overwrite=False
 def run_seeds(spec, seeds, prepared_dir, factor_dir, out_root, **kw):
     """The same configuration over several seeds (brief: at least 5)."""
     return [run(dataclasses.replace(spec, seed=s), prepared_dir, factor_dir, out_root, **kw) for s in seeds]
+
+
+def _tuples(d):
+    return {k: tuple(v) if isinstance(v, list) else v for k, v in d.items()}
+
+
+def backtest_saved(run_dir, splits, prepared_dir=None, factor_dir=None, device="auto", use_fallback=True):
+    """Backtest a finished run on `splits` from its saved files, with no training and no selection.
+
+    Rebuilds the policy from config.json + model.pt (a baseline needs neither) and applies the
+    run's stay-flat decision (row["fallback_used"]) unless use_fallback=False. prepared_dir /
+    factor_dir default to the paths stored in config.json. Returns ({split: metrics}, {split: backtest}).
+    """
+    run_dir = Path(run_dir)
+    conf = json.loads((run_dir / "config.json").read_text())
+    row = json.loads((run_dir / "metrics.json").read_text())["row"]
+    spec = conf["spec"]
+    env_d = dict(spec["env"])
+    if env_d.get("signals") is not None:
+        env_d["signals"] = tuple(env_d["signals"])
+    cfg = EnvConfig(**env_d)
+    dev = seeding.pick_device(device)
+    prepared_dir = prepared_dir or conf["prepared_dir"]
+    factor_dir = factor_dir or conf["factor_dir"]
+    if spec["agent"] in BASELINES:
+        policy = make_baseline(spec["agent"], spec["seed"])
+    elif use_fallback and row.get("fallback_used") is True:
+        policy = make_baseline(spec["fallback"], spec["seed"])
+    else:
+        agent = make_agent(spec["agent"], cfg.state_dim, 3, dev, spec["seed"], **_tuples(conf["agent_config"]))
+        agent.load_state_dict(th.load(run_dir / "model.pt", map_location=dev))
+        policy = lambda o: agent.act(o, deterministic=True)   # noqa: E731
+    bts, mets = {}, {}
+    for s in splits:
+        bts[s] = run_policy(policy, Market(prepared_dir, factor_dir, s, cfg, dev), cfg, chunks=1)
+        mets[s] = compute_metrics(bts[s], cfg.periods_per_year)
+    return mets, bts

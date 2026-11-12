@@ -6,6 +6,7 @@ environment as the agents, so costs, execution lag and accounting are identical.
     random         uniform random action every decision, seeded
     cash           never trade (stay flat): the "do nothing" reference that RL
                    checkpoints are not allowed to win with (see runner.selection_score)
+    always_short   enter short at the first bar, then hold (the mirror of buy_and_hold)
 """
 import torch as th
 
@@ -14,6 +15,12 @@ def buy_and_hold_policy(obs):
     """Increase the level until fully long, then keep it (action 2 = +1, 1 = keep)."""
     full = obs[:, 0] >= 1.0 - 1e-6
     return th.where(full, th.ones_like(full, dtype=th.long), th.full_like(full, 2, dtype=th.long))
+
+
+def always_short_policy(obs):
+    """Decrease the level until fully short, then keep it (action 0 = -1, 1 = keep)."""
+    full = obs[:, 0] <= -1.0 + 1e-6
+    return th.where(full, th.ones_like(full, dtype=th.long), th.zeros_like(full, dtype=th.long))
 
 
 def random_policy(seed, action_dim=3):
@@ -29,7 +36,7 @@ def cash_policy(obs):
     return th.ones(obs.shape[0], dtype=th.long, device=obs.device)
 
 
-BASELINES = ("buy_and_hold", "random", "cash")
+BASELINES = ("buy_and_hold", "random", "cash", "always_short")
 
 
 def make_baseline(name, seed):
@@ -39,4 +46,6 @@ def make_baseline(name, seed):
         return random_policy(seed)
     if name == "cash":
         return cash_policy
+    if name == "always_short":
+        return always_short_policy
     raise ValueError(f"unknown baseline {name!r}")
