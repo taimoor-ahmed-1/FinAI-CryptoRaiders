@@ -99,6 +99,9 @@ class EnvConfig:
     max_holding_bars: int = 0           # force exit after this many bars, 0 = off
     gate: str = None                    # 0/1 market column; while 0 the position can only shrink (None = the state's)
     holding_norm_bars: int = 1440       # "time in position" feature = bars / this, capped at 1
+    entry_signal: int = -1              # E20: >= 0 = a long may only be opened / enlarged while factor j > entry_threshold,
+    entry_threshold: float = 0.0        #   a short only while it is < -entry_threshold (j = 8: the mean of the 8 factors)
+    min_hold_bars: int = 0              # E20: a position must be kept at least this many bars before it can change
     reward: str = "net_asset_change"
     reward_scale: float = None          # None = the reward's own default
     reward_kwargs: dict = field(default_factory=dict)
@@ -260,6 +263,18 @@ class TradingEnv:
             # a position may be reduced or closed but not opened or enlarged
             grow = new_level.abs() > level_prev.abs()
             new_level = th.where(grow & ~self.m.gate[self.idx], level_prev, new_level)
+
+        if c.entry_signal >= 0:
+            # signal-gated entries (experiment 20): the agent can only trade in the direction of an extreme factor reading
+            f = self.m.feat[self.idx, :8]
+            sig = f.mean(1) if c.entry_signal == 8 else f[:, c.entry_signal]
+            up = (new_level > level_prev) & (new_level > 0)
+            down = (new_level < level_prev) & (new_level < 0)
+            blocked = (up & ~(sig > c.entry_threshold)) | (down & ~(sig < -c.entry_threshold))
+            new_level = th.where(blocked, level_prev, new_level)
+        if c.min_hold_bars > 0:
+            locked = (level_prev != 0) & (self.hold_bars < c.min_hold_bars)
+            new_level = th.where(locked, level_prev, new_level)
 
         in_pos = level_prev != 0
         if c.stop_loss > 0:

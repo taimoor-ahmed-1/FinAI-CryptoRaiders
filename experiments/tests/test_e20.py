@@ -64,3 +64,68 @@ def test_crossfit_blocks_and_stitching():
     for f, (lo, hi) in enumerate(CF.blocks(n, 4)):
         assert np.all(tr[lo:hi] == 10 * f + 0.5)
     assert np.all(np.load(fd / "factors_val.npy") == -9.0)
+
+
+# ---------------------------------------------------------------- E20b: gated environment and folds
+from rltrade import factor_rule as FR                      # noqa: E402
+from rltrade import walkforward as WF                      # noqa: E402
+from rltrade.baselines import buy_and_hold_policy          # noqa: E402
+from rltrade.env import EnvConfig, Market, run_policy      # noqa: E402
+from tests.test_e16 import _prepared                       # noqa: E402
+
+
+def test_rule_trades_the_same_inside_its_own_gate():
+    d = _prepared(splits=("train", "val"), n=4000)
+    cfg = EnvConfig(state="A")
+    sig = FR.signals(np.load(d / "factors_train.npy"))
+    grid = FR.make_grid(sig, quantiles=(0.7, 0.95))
+    m = Market(d, d, "val", cfg, "cpu")
+    for g in [grid[i] for i in (0, 3, 9, 14, 30, len(grid) - 1)]:
+        pol = FR.rule_policy([g], cfg, "cpu")
+        free = run_policy(pol, m, cfg)
+        gcfg = EnvConfig(state="A", **WF.gate_config(g))
+        gated = run_policy(pol, m, gcfg)
+        assert np.array_equal(free["level"], gated["level"]) and np.allclose(free["equity"], gated["equity"]), g
+
+
+def test_gate_blocks_entries_and_min_hold_locks():
+    d = _prepared(splits=("train", "val"), n=4000)
+    k = 0.8
+    cfg = EnvConfig(state="A", entry_signal=2, entry_threshold=k)
+    m = Market(d, d, "val", cfg, "cpu")
+    bt = run_policy(buy_and_hold_policy, m, cfg)
+    f2 = np.load(d / "factors_val.npy")[:, 2]
+    first = int(np.argmax(bt["level"] > 0))
+    assert bt["level"][first] == 1 and f2[bt["bar"][first]] > k
+    assert np.all(f2[bt["bar"][:first]] <= k)
+    toggle = lambda o: th.where(o[:, 0] > 0, th.zeros(len(o), dtype=th.long), th.full((len(o),), 2, dtype=th.long))  # noqa: E731
+    lv = run_policy(toggle, m, EnvConfig(state="A", min_hold_bars=50))["level"]
+    runs, cur = [], 0
+    for x in lv[:-20]:
+        if x > 0:
+            cur += 1
+        elif cur:
+            runs.append(cur); cur = 0
+    assert runs and min(runs) == 10                       # 50 bars / 5 bars per decision
+    assert np.all(run_policy(toggle, m, EnvConfig(state="A"))["level"][:20] == np.tile([1, 0], 10))
+
+
+def test_write_fold_slices_and_stitch():
+    d = _prepared(splits=("train", "val"), n=4000)
+    w = WF.windows(4000, 4000)
+    assert w["T3"] == ("train", 2000, 3000) and w["V2"] == ("val", 2000, 4000)
+    out = WF.write_fold(d, d, w, 2, Path(tempfile.mkdtemp()))            # fold 3: train T1-T3, ckpt T4, judged V1
+    src_v, src_t = np.load(d / "market_val.npz"), np.load(d / "market_train.npz")
+    test = np.load(out / "market_test.npz")
+    assert np.array_equal(test["midpoint"], src_v["midpoint"][:2000])
+    assert np.array_equal(np.load(out / "factors_test.npy"), np.load(d / "factors_val.npy")[:2000])
+    hist = np.load(out / "market_hist.npz")
+    assert np.array_equal(hist["midpoint"], src_t["midpoint"])           # T1-T4 = all of train
+    assert len(np.load(out / "factors_train.npy")) == 3000
+    cfg = EnvConfig(state="A")
+    bts = [run_policy(buy_and_hold_policy, Market(out, out, s, cfg, "cpu"), cfg) for s in ("val", "test")]
+    st = WF.stitch(bts)
+    assert len(st["returns"]) == sum(len(b["returns"]) for b in bts)
+    assert np.isclose(st["equity"][-1], bts[0]["equity"][-1] * bts[1]["equity"][-1])
+    res = {"num_trades": np.array([0, 9, 9]), "sharpe": np.array([5.0, 1.0, 2.0])}
+    assert WF.select_rule(res) == 2
