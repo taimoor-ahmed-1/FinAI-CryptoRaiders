@@ -70,6 +70,7 @@ class RnnConfig:
     input_noise: float = 0.01
     label_noise: float = 0.01      # notebook: smoothing 0.1 * 0.1
     skip_head: int = 1024          # notebook never sampled the first 1024 train rows (factor warm-up)
+    train_exclude: tuple = ()      # ((lo, hi), ...) train rows no training window may touch (cross-fitting, E20)
     amp: bool = True               # mixed precision on GPU
     seed: int = 0
     device: str = "auto"
@@ -95,10 +96,25 @@ class SeqData:
     def labelled(self, split):
         return self.y[split].shape[0]
 
-    def sample_train(self, batch_size, seq_len, skip_head, input_noise, label_noise):
+    def allowed_starts(self, seq_len, skip_head, exclude=()):
+        """Window starts in train whose rows [i0, i0 + seq_len) avoid every excluded [lo, hi) range."""
         hi = self.labelled("train") - seq_len
         lo = min(skip_head, max(hi - 1, 0))
-        i0 = th.randint(lo, hi + 1, (batch_size,), device=self.device)
+        i0 = np.arange(lo, hi + 1)
+        ok = np.ones(len(i0), dtype=bool)
+        for a, b in exclude:
+            ok &= (i0 + seq_len <= a) | (i0 >= b)
+        if not ok.any():
+            raise ValueError("no training window left after the exclusions")
+        return th.from_numpy(i0[ok]).to(self.device)
+
+    def sample_train(self, batch_size, seq_len, skip_head, input_noise, label_noise, starts=None):
+        if starts is None:
+            hi = self.labelled("train") - seq_len
+            lo = min(skip_head, max(hi - 1, 0))
+            i0 = th.randint(lo, hi + 1, (batch_size,), device=self.device)
+        else:
+            i0 = starts[th.randint(0, len(starts), (batch_size,), device=self.device)]
         ids = i0[:, None] + th.arange(seq_len, device=self.device)[None, :]
         x = self.x_all[ids]                               # train rows start at offset 0
         y = self.y["train"][ids]
@@ -181,12 +197,14 @@ def _optimizer(cfg, params):
     raise ValueError(f"unknown optimizer {cfg.optimizer!r}")
 
 
-def train_rnn(cfg, prepared_dir, out_dir, trial=None, verbose=True, save_factors=True):
+def train_rnn(cfg, prepared_dir, out_dir, trial=None, verbose=True, save_factors=True, save_splits=None):
     """Train one model; write checkpoint, factors and metrics to `out_dir`.
 
     `trial` is an optional Optuna trial: validation loss is reported to it and the
     run is pruned when Optuna says so. `save_factors=False` skips writing the
-    factor arrays (tuning trials - they are ~40 MB each). Returns the metrics dict.
+    factor arrays (tuning trials - they are ~40 MB each); `save_splits` limits which splits are written.
+    `cfg.train_exclude` keeps every training window away from the given train rows (cross-fitting).
+    Returns the metrics dict.
     """
     cfg = cfg if isinstance(cfg, RnnConfig) else RnnConfig(**cfg)
     out = Path(out_dir)
@@ -206,6 +224,7 @@ def train_rnn(cfg, prepared_dir, out_dir, trial=None, verbose=True, save_factors
     if cfg.max_steps > 0:
         steps = min(steps, cfg.max_steps)
     steps = max(steps, 1)
+    starts = data.allowed_starts(cfg.seq_len, cfg.skip_head, cfg.train_exclude) if cfg.train_exclude else None
     vstarts = th.tensor(data.valid_starts("val", cfg.seq_len, cfg.wup_dim, cfg.valid_windows), device=device)
     ar = th.arange(cfg.seq_len, device=device)
     if verbose:
@@ -230,7 +249,7 @@ def train_rnn(cfg, prepared_dir, out_dir, trial=None, verbose=True, save_factors
     stop_reason = "step budget"
     net.train()
     for step in range(steps):
-        x, y = data.sample_train(cfg.batch_size, cfg.seq_len, cfg.skip_head, cfg.input_noise, cfg.label_noise)
+        x, y = data.sample_train(cfg.batch_size, cfg.seq_len, cfg.skip_head, cfg.input_noise, cfg.label_noise, starts)
         with th.autocast(device_type=device.type, dtype=th.float16, enabled=amp):
             pred, _ = net(x)
         loss = ((pred.float() - y) ** 2)[:, cfg.wup_dim:].mean()
@@ -275,7 +294,7 @@ def train_rnn(cfg, prepared_dir, out_dir, trial=None, verbose=True, save_factors
                "best_val_loss_windows": best, "minutes": round((time.time() - t0) / 60, 2)}
     for s in data.splits:
         f = factors[data.offset[s]: data.offset[s] + data.length[s]]
-        if save_factors:
+        if save_factors and (save_splits is None or s in save_splits):
             np.save(out / f"factors_{s}.npy", f)
         metrics[s] = label_metrics(f, data.y[s].cpu().numpy())
     metrics["run"] = seeding.run_info(cfg.seed)
