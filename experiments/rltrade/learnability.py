@@ -78,9 +78,11 @@ def planted_signal(price, rho, seed, h=PLANT_H, lag=1):
 
 
 def write_variant(prepared_dir, factor_dir, out_dir, kind, rho=0.0, seed=0, splits=("train", "val")):
-    """Writes factors_{split}.npy for a variant ("shuffled" or "planted") plus variant.json with the realised IC
-    of factor f5 against the 300-bar forward return. The planted column is put on the scale of the original
-    f5 on train (same mean and standard deviation)."""
+    """Writes factors_{split}.npy for a variant plus variant.json with the realised IC of factor f5 against the
+    300-bar forward return. Variants: "shuffled" (whole days moved), "planted" (f5 replaced by the planted signal)
+    and "planted_only" (E23: the planted f5 is the ONLY non-constant input - the other 7 factors are set to 0, so
+    the agent has one input instead of 8). The planted column is put on the scale of the original f5 on train
+    (same mean and standard deviation)."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     src = {s: np.load(Path(factor_dir) / f"factors_{s}.npy").astype(np.float32) for s in splits}
@@ -91,8 +93,10 @@ def write_variant(prepared_dir, factor_dir, out_dir, kind, rho=0.0, seed=0, spli
         price = np.load(Path(prepared_dir) / f"market_{s}.npz")["midpoint"].astype(np.float64)
         if kind == "shuffled":
             f = shuffle_days(f, seed + 1000 * k)
-        elif kind == "planted":
+        elif kind in ("planted", "planted_only"):
             f[:, PLANT_FACTOR] = mu + sd * planted_signal(price, rho, seed + 1000 * k)
+            if kind == "planted_only":
+                f[:, [j for j in range(f.shape[1]) if j != PLANT_FACTOR]] = 0.0
         else:
             raise ValueError(kind)
         np.save(out / f"factors_{s}.npy", f.astype(np.float32))

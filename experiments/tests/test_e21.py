@@ -65,3 +65,15 @@ def test_train_run_scores_both_splits_and_resumes():
     row = LB.preference_table(pref, act, np.load(d / "factors_val.npy"), m.price.numpy(), horizons=(60,), every=10)
     assert "corr_f5" in row and "ic_60" in row
     assert abs(row["from_flat_long_pct"] + row["from_flat_short_pct"] + row["from_flat_stay_pct"] - 100) < 1e-9
+
+
+def test_planted_only_keeps_one_input_and_matches_planted():
+    d = _prepared(n=6000)
+    out = Path(tempfile.mkdtemp())
+    _, a = LB.write_variant(d, d, out / "p", "planted", rho=0.2, seed=0)
+    _, b = LB.write_variant(d, d, out / "po", "planted_only", rho=0.2, seed=0)
+    for s in ("train", "val"):
+        fp, fo = np.load(out / "p" / f"factors_{s}.npy"), np.load(out / "po" / f"factors_{s}.npy")
+        assert np.array_equal(fp[:, LB.PLANT_FACTOR], fo[:, LB.PLANT_FACTOR])       # the same planted signal
+        others = [j for j in range(8) if j != LB.PLANT_FACTOR]
+        assert np.all(fo[:, others] == 0) and a["ic"][s] == b["ic"][s]
