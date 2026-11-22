@@ -43,6 +43,19 @@ def suggest(trial, agent):
                   target_update=trial.suggest_categorical("target_update", [500, 2000, 8000]),
                   eps_fraction=trial.suggest_float("eps_fraction", 0.1, 0.5),
                   replay_ratio=trial.suggest_categorical("replay_ratio", [0.125, 0.25, 0.5]))
+    elif agent == "sac":                                        # discrete SAC (experiment 22)
+        hp.update(batch_size=trial.suggest_categorical("batch_size", [128, 256, 512]),
+                  replay_ratio=trial.suggest_categorical("replay_ratio", [0.125, 0.25, 0.5]),
+                  tau=trial.suggest_categorical("tau", [0.002, 0.005, 0.01]),
+                  target_entropy_ratio=trial.suggest_categorical("target_entropy_ratio", [0.2, 0.4, 0.6, 0.8]))
+    elif agent == "rppo":                                       # sb3-contrib RecurrentPPO (experiment 22)
+        hp.update(entropy_coef=trial.suggest_float("entropy_coef", 1e-4, 0.1, log=True),
+                  clip=trial.suggest_categorical("clip", [0.1, 0.2, 0.3]),
+                  gae_lambda=trial.suggest_categorical("gae_lambda", [0.9, 0.95, 0.98]),
+                  rollout_len=trial.suggest_categorical("rollout_len", [64, 128, 256]),
+                  minibatch=trial.suggest_categorical("minibatch", [256, 1024, 4096]),
+                  epochs=trial.suggest_categorical("epochs", [3, 6, 10]),
+                  lstm_hidden=trial.suggest_categorical("lstm_hidden", [64, 128, 256]))
     else:
         raise ValueError(f"no search space for {agent!r}")
     env = {"reward_scale": trial.suggest_categorical("reward_scale", [10.0, 100.0, 1000.0])}

@@ -40,7 +40,7 @@ import numpy as np
 import torch as th
 
 from . import seeding
-from .agents import make_agent
+from .agents import agent_policy, make_agent
 from .baselines import BASELINES, make_baseline
 from .env import EnvConfig, Market, TradingEnv, run_policy
 from .metrics import compute_metrics
@@ -94,7 +94,7 @@ METRIC_KEYS = ("cum_return_pct", "annual_return_pct", "sharpe", "sortino", "max_
 @dataclass
 class RunSpec:
     experiment: str                      # e.g. "03_baseline"
-    agent: str                           # ppo / a2c / dqn / ddqn / d3qn / buy_and_hold / random
+    agent: str                           # ppo / a2c / dqn / ddqn / d3qn / sac / rppo / buy_and_hold / random
     seed: int = 0
     env: EnvConfig = field(default_factory=EnvConfig)
     agent_hp: dict = field(default_factory=dict)
@@ -210,7 +210,7 @@ def run(spec, prepared_dir, factor_dir, out_root, device="auto", overwrite=False
         env = TradingEnv(mk["train"], cfg, num_envs=agent.cfg.num_envs, mode="train", seed=spec.seed)
 
         def callback(ag, steps):
-            pol = lambda o: ag.act(o, deterministic=True)       # noqa: E731
+            pol = agent_policy(ag)
             m = compute_metrics(run_policy(pol, mk["val"], cfg, chunks=spec.val_chunks), ppy)
             snapshot = lambda: {k: {n: t.detach().cpu().clone() for n, t in v.items()}   # noqa: E731
                                 for k, v in ag.state_dict().items()}
@@ -242,7 +242,7 @@ def run(spec, prepared_dir, factor_dir, out_root, device="auto", overwrite=False
         if not val_curve or val_curve[-1]["steps"] < spec.total_steps - spec.eval_every // 2:
             callback(agent, spec.total_steps)                  # always score the final policy too
         agent.load_state_dict(sel.state)
-        policy = lambda o: agent.act(o, deterministic=True)   # noqa: E731
+        policy = agent_policy(agent)
         fallback_used = fallback_applies(spec, sel.eligible, sel.score)
         if fallback_used:
             ckpt = compute_metrics(run_policy(policy, mk["val"], cfg, chunks=1), ppy)
@@ -330,7 +330,7 @@ def load_saved(run_dir, device="auto", use_fallback=True):
     else:
         agent = make_agent(spec["agent"], cfg.state_dim, 3, dev, spec["seed"], **_tuples(conf["agent_config"]))
         agent.load_state_dict(th.load(run_dir / "model.pt", map_location=dev))
-        policy = lambda o: agent.act(o, deterministic=True)   # noqa: E731
+        policy = agent_policy(agent)
     return policy, agent, cfg, conf, dev
 
 

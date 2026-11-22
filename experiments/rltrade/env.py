@@ -336,6 +336,8 @@ def run_policy(policy, market, cfg, chunks=1, seed=0):
     """
     env = TradingEnv(market, cfg, num_envs=chunks, mode="eval", seed=seed)
     obs = env.reset()
+    if hasattr(policy, "reset"):                 # a recurrent policy starts every backtest with an empty memory
+        policy.reset()
     T = env.ep_steps
     rec = {k: np.empty((T, chunks)) for k in ("eq_prev", "eq_next", "level", "traded", "cost")}
     bar = np.empty((T, chunks), dtype=np.int64)
