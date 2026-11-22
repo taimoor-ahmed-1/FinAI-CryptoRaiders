@@ -1,7 +1,7 @@
 """
 Experiment 22: compare PPO, discrete SAC and RecurrentPPO with experiment 16's Double DQN on validation.
 
-Every algorithm is tuned and trained the same way as E16 (state A, E15 factors, 15 Optuna trials
+Every algorithm is tuned and trained as E16 but with a decision every 60 bars (E23a) (state A, E15 factors, 15 Optuna trials
 x 500k steps scored on validation, 5 seeds x 2M steps, a checkpoint must trade >= 5 times, and the
 stay-flat fallback unless it beats cash and buy and hold). Each algorithm has its own output root
 under initiation/e22_algorithms/<agent>; E16's runs stay where they are (initiation/agents).
@@ -14,7 +14,8 @@ import numpy as np
 import pandas as pd
 
 E22_AGENTS = ("ppo", "sac", "rppo")
-NAMES = {"ddqn": "Double DQN (experiment 1)", "ppo": "PPO", "sac": "Discrete SAC", "rppo": "Recurrent PPO (LSTM)"}
+NAMES = {"ddqn": "Double DQN (experiment 1, 5-min decisions)", "ppo": "PPO (60-min)", "sac": "Discrete SAC (60-min)",
+         "rppo": "Recurrent PPO, LSTM (60-min)"}
 
 
 def sources(init_dir):
@@ -57,11 +58,13 @@ def compare(init_dir):
                      "val max DD %": _ms(g.val_max_drawdown_pct, 1, False), "trades": _ms(g.val_num_trades, 0, False),
                      "stayed flat": f"{int(flat.sum())} of {len(g)}",
                      "checkpoint val Sharpe (before fallback)": _ms(g.ckpt_val_sharpe)})
-    base = Path(init_dir) / "agents" / "results.csv"
-    if base.exists():
-        b = pd.read_csv(base)
+    # baselines at the E22 decision interval when an E22 notebook has run, else E16's (5-minute) ones
+    base = [(out / "results.csv", exp) for a, _, out, exp in sources(init_dir)[1:] if (out / "results.csv").exists()]
+    base = base[0] if base else (Path(init_dir) / "agents" / "results.csv", "16_agents")
+    if base[0].exists():
+        b = pd.read_csv(base[0])
         for name in ("buy_and_hold", "always_short", "cash"):
-            r = b[(b.experiment == "16_agents") & (b.agent == name)]
+            r = b[(b.experiment == base[1]) & (b.agent == name)]
             if len(r):
                 r = r.iloc[0]
                 rows.append({"policy": name.replace("_", " "), "seeds": 1, "val Sharpe": f"{r.val_sharpe:+.2f}",

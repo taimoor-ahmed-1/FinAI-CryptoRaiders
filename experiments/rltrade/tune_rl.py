@@ -77,7 +77,9 @@ def tune_agent(agent, prepared_dir, factor_dir, out_root, env_cfg=None, n_trials
     out.mkdir(parents=True, exist_ok=True)
     study = optuna.create_study(
         # _mt<k>: the eligibility rule is part of the objective, so it is part of the study's identity
-        study_name=f"rl_{agent}_{env_cfg.state}_{env_cfg.reward}_mt{min_val_trades}_r{SELECTION_RULE}",
+        # a decision interval other than E16's 5 bars is part of the study's identity too (E22: 60 bars)
+        study_name=f"rl_{agent}_{env_cfg.state}_{env_cfg.reward}_mt{min_val_trades}_r{SELECTION_RULE}"
+                   + (f"_g{env_cfg.step_gap}" if env_cfg.step_gap != 5 else ""),
         storage=f"sqlite:///{out / 'optuna_rl.db'}",
         load_if_exists=True, direction="maximize", sampler=optuna.samplers.TPESampler(seed=sampler_seed),
         pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=eval_every))

@@ -64,3 +64,34 @@ def test_build_scales_on_train_only_and_appends_columns():
     assert tr.shape == (400, 5) and va.shape == (200, 5)
     assert np.array_equal(tr[:, :3], np.load(src / "alpha101_train.npy"))
     assert np.all(va[:, 3] == 1.0) and np.isfinite(tr).all() and np.abs(tr[:, 3:]).max() <= 1.0
+
+
+def test_write_halves_cuts_validation_in_two():
+    from rltrade import halves
+    from tests.test_e16 import _prepared
+    d, out = _prepared(n=4000), Path(tempfile.mkdtemp())
+    _, info = halves.write_halves(d, d, out)
+    v1, v2, val = (np.load(out / f"market_{s}.npz") for s in ("v1", "v2", "val"))
+    assert len(v1["midpoint"]) + len(v2["midpoint"]) == len(val["midpoint"]) == 4000
+    assert np.array_equal(np.concatenate([v1["midpoint"], v2["midpoint"]]), val["midpoint"])
+    assert np.array_equal(np.load(out / "factors_v2.npy"), np.load(d / "factors_val.npy")[info["v2"]["rows"][0]:])
+    assert v1["time_ns"][-1] < v2["time_ns"][0]
+
+
+def test_train_select_keeps_the_best_v1_checkpoint_and_reports_v2():
+    from rltrade import halves
+    from tests.test_e16 import TINY_DQN, _prepared
+    d, data, out = _prepared(n=6000), Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp())
+    halves.write_halves(d, d, data)
+    r = halves.train_select("t", data, out, 0, TINY_DQN, {"step_gap": 30, "episode_bars": 600, "start_skip": 10},
+                            total_steps=2_000, eval_every=1_000, device="cpu", min_trades=1, train_chunks=2, verbose=False)
+    ok = [c for c in r["curve"] if c["eligible"]]
+    if ok:
+        b = max(ok, key=lambda c: c["v1_sharpe"])
+        assert r["selected"]["steps"] == b["steps"]
+        assert np.isclose(r["selected"]["v2"]["sharpe"], b["v2_sharpe"])           # the reloaded checkpoint
+        assert r["selected"]["fallback"] == (r["selected"]["v1"]["sharpe"] <= max(0.0, r["buy_and_hold"]["v1"]["sharpe"]))
+    else:
+        assert r["selected"] is None
+    assert (out / "runs" / "t" / "result.json").exists()
+    assert halves.train_select("t", data, out, 0, TINY_DQN, {}, 1, 1, verbose=False)["curve"] == r["curve"]   # resumes
