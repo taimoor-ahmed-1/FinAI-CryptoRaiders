@@ -95,3 +95,28 @@ def test_train_select_keeps_the_best_v1_checkpoint_and_reports_v2():
         assert r["selected"] is None
     assert (out / "runs" / "t" / "result.json").exists()
     assert halves.train_select("t", data, out, 0, TINY_DQN, {}, 1, 1, verbose=False)["curve"] == r["curve"]   # resumes
+
+
+def test_train_select_by_skill_long_flat_tracks_both_choices():
+    from rltrade import halves
+    from tests.test_e16 import TINY_DQN, _prepared
+    d, data, out = _prepared(n=6000), Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp())
+    halves.write_halves(d, d, data)
+    env = {"step_gap": 30, "episode_bars": 600, "start_skip": 10, "allow_short": False}
+    r = halves.train_select("t", data, out, 0, TINY_DQN, env, total_steps=2_000, eval_every=1_000, device="cpu",
+                            min_trades=1, train_chunks=2, verbose=False, select_by="skill")
+    assert r["select_by"] == "skill" and set(r["selections"]) == {"sharpe", "skill"}
+    assert all(c["v1_short_pct"] == 0 and c["v2_short_pct"] == 0 for c in r["curve"])          # long / flat only
+    for c in r["curve"]:
+        assert np.isclose(c["v1_skill_pct"], c["v1_timing_pct"] - c["v1_costs_pct"])
+    ok = [c for c in r["curve"] if c["eligible"]]
+    for by, key in (("sharpe", "v1_sharpe"), ("skill", "v1_skill_pct")):
+        sel = r["selections"][by]
+        if not ok:
+            assert sel is None
+            continue
+        b = max(ok, key=lambda c: c[key])
+        assert sel["steps"] == b["steps"] and np.isclose(sel["v2"]["sharpe"], b["v2_sharpe"])
+    s = r["selected"]
+    if s:
+        assert s == r["selections"]["skill"] and s["fallback"] == (s["v1"]["skill_pct"] <= 0)
